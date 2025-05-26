@@ -1,0 +1,67 @@
+{
+  "overall_performance": {
+    "total_games": 400,
+    "total_wins": 275,
+    "overall_win_rate": 0.6875,
+    "avg_score_per_game": 3552.0725
+  },
+  "strengths": [
+    "Strong performance against Heuristic (win rate: 100.0%)"
+  ],
+  "weaknesses": [
+    "Struggles against Random (win rate: 1.0%)"
+  ],
+  "improvement_areas": [],
+  "statistical_significance": {
+    "Random": {
+      "t_statistic": -25.420713707288833,
+      "significant": true,
+      "mean_difference": -242.84,
+      "std_error": 9.55283957784281
+    },
+    "Greedy": {
+      "t_statistic": 8.166379184322299,
+      "significant": true,
+      "mean_difference": 612.2,
+      "std_error": 74.96590424986549
+    },
+    "Heuristic": {
+      "t_statistic": 29.55376987693027,
+      "significant": true,
+      "mean_difference": 2324.11,
+      "std_error": 78.64005200278035
+    },
+    "Adaptive": {
+      "t_statistic": 52.08899743342569,
+      "significant": true,
+      "mean_difference": 4083.6,
+      "std_error": 78.39659431378381
+    }
+  },
+  "performance_trends": {
+    "Random": {
+      "win_rate": 0.01,
+      "avg_score_difference": -242.84,
+      "performance_level": "poor",
+      "consistency": 95.5283957784281
+    },
+    "Greedy": {
+      "win_rate": 0.74,
+      "avg_score_difference": 612.2,
+      "performance_level": "good",
+      "consistency": 749.6590424986549
+    },
+    "Heuristic": {
+      "win_rate": 1.0,
+      "avg_score_difference": 2324.11,
+      "performance_level": "excellent",
+      "consistency": 786.4005200278035
+    },
+    "Adaptive": {
+      "win_rate": 1.0,
+      "avg_score_difference": 4083.6,
+      "performance_level": "excellent",
+      "consistency": 783.965943137838
+    }
+  }
+}
