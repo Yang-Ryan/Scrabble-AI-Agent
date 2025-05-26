@@ -46,3 +46,18 @@ This will:
   - `evaluation_analysis_<timestamp>.json`
   - `evaluation_plots_<timestamp>.png`
 ---
+
+## Explain For Each File
+
+    Scrabble-AI-Agent/
+    ├── main.py # train and evaluate
+    ├── scrabble_game.py # game logic...
+    ├── rl_agent.py # Q-Learning Agent
+    ├── baseline_agent.py # baseline agents to compete with（Random / Greedy / Heuristic / Adaptive）
+    ├── evaluation.py # generate games vs baseline agents and plot
+    ├── dictionary.txt
+    ├── rl_model_.json # trained Q-table model
+    ├── evaluation_results_.json
+    ├── evaluation_analysis_.json
+    ├── evaluation_plots_.png # plot
+    └── README.md
