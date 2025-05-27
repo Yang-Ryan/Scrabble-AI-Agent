@@ -142,59 +142,33 @@ class QLearningAgent(Player):
         return "STANDARD"
     
     def calculate_reward(self, game: ScrabbleGame, move: Dict, prev_state: Dict) -> float:
-        """Calculate reward for a move"""
+        """Calculate reward for a move with normalization and penalty for bad moves"""
         if not move:
             return -5  # Penalty for passing
-        
+
+        # ✔️ 基礎得分 = move 實際分數
         base_reward = move['score']
-        
-        # Bonus rewards
-        word = move['word']
-        
-        # Length bonus
-        if len(word) >= 7:
-            base_reward += 10  # Bingo bonus
-        elif len(word) >= 5:
-            base_reward += 3
-        
-        # High-value letter bonus
+
+        # ✔️ 額外小獎勵：Bingo / 難字
+        if len(move['word']) >= 7:
+            base_reward += 5  # small bingo bonus
+
         high_value_letters = {'J', 'Q', 'X', 'Z'}
-        for letter in word:
+        for letter in move['word']:
             if letter in high_value_letters:
-                base_reward += 5
-        
-        # Strategic bonuses
-        if self.opponent_model:
-            # Defensive bonus
-            defensive_positions = self.opponent_model.get_defensive_positions(
-                game.board.board, 
-                self.opponent_model.predict_opponent_tiles()
-            )
-            
-            position = move['position']
-            if position in defensive_positions:
-                base_reward += 8  # Defensive play bonus
-        
-        # Tile management penalty/bonus
+                base_reward += 1  # bonus for rare letters
+
+        # ✔️ Tile balance penalty
         vowel_count = sum(1 for tile in self.tiles if tile in 'AEIOU')
         consonant_count = len(self.tiles) - vowel_count
-        
-        # Penalty for poor tile balance
-        if vowel_count > 5 or consonant_count > 5:
+        if vowel_count >= 6 or consonant_count >= 6:
             base_reward -= 2
-        
-        # Bonus for using difficult tiles
-        difficult_tiles = {'Q', 'X', 'Z', 'J'}
-        for letter in word:
-            if letter in difficult_tiles:
-                base_reward += 3
-        
-        # End game considerations
-        if game.tile_bag.remaining_count() < 10:
-            # Bonus for using more tiles near end
-            base_reward += len(word)
-        
+
+        # ✔️ Normalization：不要讓 reward 太誇張
+        base_reward = max(-10, min(base_reward, 30))
+
         return base_reward
+
     
     def get_move(self, game: ScrabbleGame) -> Optional[Dict]:
         """Get agent's move using Q-learning with opponent modeling"""

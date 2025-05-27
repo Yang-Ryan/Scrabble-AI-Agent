@@ -295,142 +295,41 @@ class GameEvaluator:
         return analysis
 
     def _save_evaluation_results(self, results: Dict, analysis: Dict):
-        """Save evaluation results to files"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
-        # Save detailed results
-        results_file = f"evaluation_results_{timestamp}.json"
-        with open(results_file, 'w') as f:
-            # Convert numpy arrays to lists for JSON serialization
-            json_results = {}
-            for baseline, data in results.items():
-                json_results[baseline] = {
-                    key: value.tolist() if isinstance(value, np.ndarray) else value
-                    for key, value in data.items()
-                    if key != 'games_data'  # Skip detailed game data
-                }
-            json.dump(analysis, f, indent=2, default=convert_json_safe)
-        
-        # Save analysis
-        analysis_file = f"evaluation_analysis_{timestamp}.json"
-        with open(analysis_file, 'w') as f:
-            json.dump(analysis, f, indent=2, default=convert_json_safe)
-        
-        # Generate and save plots
-        self._generate_evaluation_plots(results, analysis, timestamp)
-        
-        print(f"\nResults saved:")
-        print(f"  - Detailed results: {results_file}")
-        print(f"  - Analysis: {analysis_file}")
-        print(f"  - Plots: evaluation_plots_{timestamp}.png")
+        self._generate_evaluation_plots(results, timestamp)
+        print(f"\n圖表已儲存：evaluation_plots_{timestamp}.png")
+
     
     def _generate_evaluation_plots(self, results: Dict, analysis: Dict, timestamp: str):
-        """Generate comprehensive evaluation plots"""
-        fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-        axes[1, 2] = fig.add_subplot(2, 3, 6, polar=True)
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+        fig.suptitle('RL Agent Evaluation Results', fontsize=16)
 
-        fig.suptitle('RL Agent Performance Evaluation', fontsize=16)
-        
         baselines = list(results.keys())
-        
-        # 1. Win rates comparison
+
+        # 1. Win Rate Bar Plot
         win_rates = [results[baseline]['rl_wins'] / len(results[baseline]['rl_scores']) 
                     for baseline in baselines]
         
-        axes[0, 0].bar(baselines, win_rates, color='skyblue', alpha=0.7)
-        axes[0, 0].set_title('Win Rates vs Different Baselines')
-        axes[0, 0].set_ylabel('Win Rate')
-        axes[0, 0].set_ylim(0, 1)
-        axes[0, 0].axhline(y=0.5, color='red', linestyle='--', alpha=0.5)
-        
-        # Add value labels on bars
+        axes[0].bar(baselines, win_rates, color='skyblue')
+        axes[0].set_title('Win Rates vs Baselines')
+        axes[0].set_ylim(0, 1)
         for i, v in enumerate(win_rates):
-            axes[0, 0].text(i, v + 0.02, f'{v:.1%}', ha='center', va='bottom')
-        
-        # 2. Score differences distribution
-        all_score_diffs = []
-        labels = []
+            axes[0].text(i, v + 0.02, f"{v:.1%}", ha='center')
+
+        # 2. Score Difference Boxplot
+        all_score_diffs, labels = [], []
         for baseline in baselines:
-            all_score_diffs.extend(results[baseline]['score_differences'])
-            labels.extend([baseline] * len(results[baseline]['score_differences']))
-        
-        df_scores = pd.DataFrame({'Baseline': labels, 'Score_Difference': all_score_diffs})
-        sns.boxplot(data=df_scores, x='Baseline', y='Score_Difference', ax=axes[0, 1])
-        axes[0, 1].set_title('Score Difference Distribution')
-        axes[0, 1].axhline(y=0, color='red', linestyle='--', alpha=0.5)
-        
-        # 3. Game length comparison
-        avg_game_lengths = [np.mean(results[baseline]['game_lengths']) for baseline in baselines]
-        axes[0, 2].bar(baselines, avg_game_lengths, color='lightgreen', alpha=0.7)
-        axes[0, 2].set_title('Average Game Length')
-        axes[0, 2].set_ylabel('Number of Turns')
-        
-        # 4. Performance trends over time (if multiple games)
-        if len(results[baselines[0]]['score_differences']) > 10:
-            for baseline in baselines:
-                score_diffs = results[baseline]['score_differences']
-                # Calculate moving average
-                window_size = max(5, len(score_diffs) // 10)
-                moving_avg = np.convolve(score_diffs, np.ones(window_size)/window_size, mode='valid')
-                axes[1, 0].plot(moving_avg, label=baseline, alpha=0.7)
-            
-            axes[1, 0].set_title('Performance Trends (Moving Average)')
-            axes[1, 0].set_xlabel('Game Number')
-            axes[1, 0].set_ylabel('Score Difference')
-            axes[1, 0].legend()
-            axes[1, 0].axhline(y=0, color='red', linestyle='--', alpha=0.5)
-        
-        # 5. Move time comparison
-        rl_move_times = [np.mean(results[baseline]['rl_avg_move_time']) for baseline in baselines]
-        baseline_move_times = [np.mean(results[baseline]['baseline_avg_move_time']) for baseline in baselines]
-        
-        x = np.arange(len(baselines))
-        width = 0.35
-        
-        axes[1, 1].bar(x - width/2, rl_move_times, width, label='RL Agent', alpha=0.7)
-        axes[1, 1].bar(x + width/2, baseline_move_times, width, label='Baseline', alpha=0.7)
-        axes[1, 1].set_title('Average Move Time Comparison')
-        axes[1, 1].set_ylabel('Time (seconds)')
-        axes[1, 1].set_xticks(x)
-        axes[1, 1].set_xticklabels(baselines)
-        axes[1, 1].legend()
-        
-        # 6. Performance radar chart
-        metrics = ['Win Rate', 'Avg Score Diff', 'Consistency', 'Speed']
-        
-        # Normalize metrics for radar chart
-        normalized_metrics = []
-        for baseline in baselines:
-            win_rate = results[baseline]['rl_wins'] / len(results[baseline]['rl_scores'])
-            avg_score_diff = np.mean(results[baseline]['score_differences'])
-            consistency = 1 / (1 + np.std(results[baseline]['score_differences']))  # Higher is better
-            speed = 1 / (1 + np.mean(results[baseline]['rl_avg_move_time']))  # Higher is better
-            
-            normalized_metrics.append([
-                win_rate,
-                (avg_score_diff + 50) / 100,  # Normalize to 0-1
-                consistency,
-                speed
-            ])
-        
-        # Create radar chart
-        angles = np.linspace(0, 2 * np.pi, len(metrics), endpoint=False).tolist()
-        angles += angles[:1]  # Complete the circle
-        
-        axes[1, 2].set_theta_offset(np.pi / 2)
-        axes[1, 2].set_theta_direction(-1)
-        axes[1, 2].set_thetagrids(np.degrees(angles[:-1]), metrics)
-        
-        for i, baseline in enumerate(baselines):
-            values = normalized_metrics[i] + [normalized_metrics[i][0]]
-            axes[1, 2].plot(angles, values, 'o-', linewidth=2, label=baseline, alpha=0.7)
-            axes[1, 2].fill(angles, values, alpha=0.1)
-        
-        axes[1, 2].set_title('Performance Radar Chart')
-        axes[1, 2].legend()
-        
+            diffs = results[baseline]['score_differences']
+            all_score_diffs.extend(diffs)
+            labels.extend([baseline] * len(diffs))
+
+        df = pd.DataFrame({'Baseline': labels, 'ScoreDiff': all_score_diffs})
+        sns.boxplot(data=df, x='Baseline', y='ScoreDiff', ax=axes[1])
+        axes[1].axhline(y=0, color='red', linestyle='--', alpha=0.5)
+        axes[1].set_title('Score Difference Distribution')
+
         plt.tight_layout()
-        plt.savefig(f'evaluation_plots_{timestamp}.png', dpi=300, bbox_inches='tight')
+        plt.savefig(f"evaluation_plots_{timestamp}.png", dpi=300)
         plt.close()
     
     def learning_curve_analysis(self, rl_agent: QLearningAgent, 

@@ -1,0 +1,4 @@
+*.json
+*.png
+__pycache__/
+.scrabble_env/
