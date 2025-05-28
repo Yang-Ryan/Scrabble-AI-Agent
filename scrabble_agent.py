@@ -9,7 +9,41 @@ import random
 import json
 from typing import List, Dict, Tuple, Any, Optional
 from feature_extractor import FeatureExtractor
+from collections import Counter
 
+class TileBag:
+    def __init__(self):
+        self.initial_distribution = {
+            'A': 9, 'B': 2, 'C': 2, 'D': 4, 'E': 12, 'F': 2, 'G': 3,
+            'H': 2, 'I': 9, 'J': 1, 'K': 1, 'L': 4, 'M': 2, 'N': 6,
+            'O': 8, 'P': 2, 'Q': 1, 'R': 6, 'S': 4, 'T': 6, 'U': 4,
+            'V': 2, 'W': 2, 'X': 1, 'Y': 2, 'Z': 1, '?': 2  # '?' is blank tile
+        }
+        self.tiles = self._generate_tile_bag()
+
+    def _generate_tile_bag(self):
+        bag = []
+        for letter, count in self.initial_distribution.items():
+            bag.extend([letter] * count)
+        random.shuffle(bag)
+        return bag
+
+    def draw_tiles(self, num):
+        drawn = []
+        for _ in range(min(num, len(self.tiles))):
+            drawn.append(self.tiles.pop())
+        return drawn
+
+    def add_tiles(self, tiles):
+        self.tiles.extend(tiles)
+        random.shuffle(self.tiles)
+
+    def tile_counter(self):
+        return Counter(self.tiles)
+
+    def remaining_count(self):
+        return len(self.tiles)
+    
 class ScrabbleQLearner:
     """
     Custom Q-Learning agent using linear function approximation
