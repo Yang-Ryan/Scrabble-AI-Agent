@@ -4,6 +4,36 @@ from trie import Trie
 from typing import List, Tuple, Dict, Optional, Set
 from collections import Counter, defaultdict
 
+class TileBag:
+    def __init__(self):
+        self.letter_distribution = {
+            'A': 9, 'B': 2, 'C': 2, 'D': 4, 'E': 12, 'F': 2, 'G': 3,
+            'H': 2, 'I': 9, 'J': 1, 'K': 1, 'L': 4, 'M': 2, 'N': 6,
+            'O': 8, 'P': 2, 'Q': 1, 'R': 6, 'S': 4, 'T': 6, 'U': 4,
+            'V': 2, 'W': 2, 'X': 1, 'Y': 2, 'Z': 1, '_': 2
+        }
+        self.tiles = []
+        for letter, count in self.letter_distribution.items():
+            self.tiles.extend([letter] * count)
+        random.shuffle(self.tiles)
+
+    def draw_tiles(self, num):
+        drawn = []
+        for _ in range(num):
+            if self.tiles:
+                drawn.append(self.tiles.pop())
+        return drawn
+
+    def return_tiles(self, tiles):
+        self.tiles.extend(tiles)
+        random.shuffle(self.tiles)
+
+    def remaining_count(self):
+        return len(self.tiles)
+
+    def tile_counter(self):
+        return Counter(self.tiles)
+
 class ScrabbleBoard:
     """Scrabble board representation with premium squares"""
     

@@ -16,11 +16,17 @@ class QLearningAgent(Player):
         super().__init__(name)
         
         # Q-Learning parameters
+        self.name = name
+        self.q_table = defaultdict(float)
         self.learning_rate = learning_rate
         self.discount_factor = discount_factor
         self.epsilon = epsilon
         self.epsilon_decay = epsilon_decay
         self.min_epsilon = 0.01
+        self.last_state = None
+        self.last_action = None
+        self.tiles = []
+        self.score = 0
         
         # Q-table and experience
         self.q_table = defaultdict(lambda: defaultdict(float))
@@ -172,6 +178,7 @@ class QLearningAgent(Player):
     
     def get_move(self, game: ScrabbleGame) -> Optional[Dict]:
         """Get agent's move using Q-learning with opponent modeling"""
+        state = self.get_state_representation(game) 
         valid_moves = game.get_valid_moves(self.tiles)
         
         if not valid_moves:
@@ -180,21 +187,16 @@ class QLearningAgent(Player):
         current_state = self.get_state_representation(game)
         
         # Epsilon-greedy action selection
+        # Choose action using Q-learning policy (epsilon-greedy)
         if random.random() < self.epsilon:
-            # Exploration: random move with strategic bias
-            move = self._explore_with_bias(valid_moves, game)
+            action = random.choice(valid_moves)
         else:
-            # Exploitation: best Q-value move
-            move = self._select_best_move(valid_moves, current_state, game)
-        
-        # Store state-action for learning
-        if move:
-            action = self.get_action_representation(move)
-            self.last_state = current_state
-            self.last_action = action
-            self.last_move = move
-        
-        return move
+            q_vals = [(move, self.q_table.get((state, move['word']), 0)) for move in valid_moves]
+            action = max(q_vals, key=lambda x: x[1])[0]
+
+        self.last_state = state
+        self.last_action = action['word']
+        return action
     
     def _explore_with_bias(self, valid_moves: List[Dict], game: ScrabbleGame) -> Dict:
         """Smart exploration with strategic bias"""

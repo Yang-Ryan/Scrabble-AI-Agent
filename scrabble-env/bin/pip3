@@ -1,4 +1,4 @@
-#!/Users/linyukai/Desktop/Scrabble-AI-Agent/scrabble-env/bin/python3.12
+#!/home/wy/AIproject/Scrabble-AI-Agent/scrabble-env/bin/python3
 # -*- coding: utf-8 -*-
 import re
 import sys
