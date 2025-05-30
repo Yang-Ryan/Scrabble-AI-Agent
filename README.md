@@ -17,33 +17,34 @@ $ source scrabble-env/bin/activate
 
 ## Training the RL Agent
 
-To train the agent using Q-Learning against a baseline (default: Greedy agent):
+To train our model, you can add many command line args: 
 
 ```bash
+python main.py train \
+    --episodes 1000 \
+    --learning-rate 0.02 \
+    --epsilon 0.4 \
+    --gamma 0.95 \
+    --eval-interval 25 \
+    --save-model \
+    --dictionary example.txt
+ˋˋˋ
+
+```bash
+python main.py self-play \
+    --episodes 5000 \
+    --learning-rate 0.015 \
+    --epsilon 0.4 \
+    --buffer-size 10000 \
+    --greedy-eval-interval 5 \
+    --greedy-eval-games 5 \
+    --save-model
+
 (scrabble-env) $ python3 main.py self-play --episodes 2000 --greedy-eval-games 3 --save-model
 (scrabble-env) $ python3 main.py train --episodes 500 --save-model
 
 ```
 
----
-
-## Evaluation & Visualization
-
-Once trained, evaluate the agent against four baselines: Random, Greedy, Heuristic, Adaptive:
-
-```bash
-(scrabble-env) $ python3 main.py evaluate --model-path rl_model_2025XXXX.json --eval-games 100
-```
-
-Replace `rl_model_2025XXXX.json` with your actual model path.
-
-This will:
-- Run 100 evaluation games per baseline.
-- Generate win rate stats, score distributions, and average move time.
-- Produce 3 output files:
-  - `evaluation_results_<timestamp>.json`
-  - `evaluation_analysis_<timestamp>.json`
-  - `evaluation_plots_<timestamp>.png`
 ---
 
 ## Explain For Each File
