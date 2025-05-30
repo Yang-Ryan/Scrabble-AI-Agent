@@ -11,7 +11,7 @@ from datetime import datetime
 from collections import defaultdict
 
 from scrabble_agent import ScrabbleQLearner, GreedyAgent, RandomAgent, HeuristicAgent
-from trainer import ScrabbleTrainer
+from trainer import EnhancedScrabbleTrainer as ScrabbleTrainer
 from utils import save_game_data, format_time, generate_summary_stats
 
 class ScrabbleEvaluator:
