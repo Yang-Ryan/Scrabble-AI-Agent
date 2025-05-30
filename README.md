@@ -20,11 +20,10 @@ $ source scrabble-env/bin/activate
 To train the agent using Q-Learning against a baseline (default: Greedy agent):
 
 ```bash
+(scrabble-env) $ python3 main.py self-play --episodes 2000 --greedy-eval-games 3 --save-model
 (scrabble-env) $ python3 main.py train --episodes 500 --save-model
-```
 
-- You can change number of episodes with `--episodes`.
-- `--save-model` will export the trained Q-table into a `.json` file for future evaluation.
+```
 
 ---
 

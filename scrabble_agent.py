@@ -53,10 +53,9 @@ class AdaptiveTimePreference:
         # Track performance for learning
         self.phase_outcomes = defaultdict(list)
         self.parameter_history = []
-        
-        print("Initialized Adaptive Time Preference")
-    
+            
     def calculate_urgency(self, game_state: Dict) -> float:
+
         """Calculate current urgency level based on learned parameters"""
         tiles_remaining = game_state.get('tiles_remaining', 98)
         score_gap = game_state.get('my_score', 0) - game_state.get('opponent_score', 0)
@@ -79,6 +78,7 @@ class AdaptiveTimePreference:
         return final_urgency
     
     def _get_base_urgency(self, game_progress: float) -> float:
+
         """Get base urgency using learned transition points and levels"""
         if game_progress >= self.transition_points[0]:
             return self.urgency_levels[0]  # Early game
@@ -88,6 +88,7 @@ class AdaptiveTimePreference:
             return self.urgency_levels[2]  # End game
     
     def _assess_rack_quality(self, rack: List[str]) -> float:
+
         """Assess rack quality (0.0 = poor, 1.0 = excellent)"""
         if not rack:
             return 0.5
@@ -196,7 +197,6 @@ class AdaptiveTileValues:
         # Initialize with strategic priors
         self._initialize_strategic_priors()
         
-        print("Initialized Adaptive Tile Values")
     
     def _initialize_strategic_priors(self):
         """Initialize with reasonable strategic priors"""
@@ -579,6 +579,7 @@ class AdaptiveScrabbleQLearner:
         self.min_buffer_size = min_buffer_size
         self.target_update_frequency = target_update_frequency
         self.updates_since_target_sync = 0
+        self.last_td_error = 0
         
         # Networks
         self.main_weights = np.random.normal(0, 0.1, num_features)
@@ -604,10 +605,7 @@ class AdaptiveScrabbleQLearner:
         # Track adaptive learning
         self.game_phases = []
         self.current_game_phase_info = {}
-        
-        print("Initialized Adaptive Scrabble Q-Learning Agent")
-        print("Features: Q-learning + Experience Replay + Target Networks + Adaptive Timing + Adaptive Tile Values")
-    
+            
     def choose_move(self, state: Dict, valid_moves: List[Dict], 
                    training: bool = True) -> Optional[Dict]:
         """Choose move using adaptive Q-learning"""
@@ -741,7 +739,8 @@ class AdaptiveScrabbleQLearner:
             return
         
         batch = self.experience_buffer.sample_batch(self.batch_size)
-        
+        td_errors = []
+
         for experience in batch:
             state = experience['state']
             move = experience['move']
@@ -759,14 +758,17 @@ class AdaptiveScrabbleQLearner:
                 next_value = self._estimate_next_state_value(next_state)
                 target = reward + self.gamma * next_value
             
-            # Update main network
-            self._update_main_weights(features, target)
-        
+            # Update main network and get TD error
+            td_error = self._update_main_weights(features, target)
+            td_errors.append(abs(td_error))
+
         # Update target network periodically
         self.updates_since_target_sync += 1
         if self.updates_since_target_sync >= self.target_update_frequency:
             self.update_target_network()
             self.updates_since_target_sync = 0
+
+        return np.mean(td_errors) if td_errors else 0.0
     
     def _estimate_next_state_value(self, next_state: Dict) -> float:
         """Estimate next state value using target network"""
@@ -829,16 +831,27 @@ class AdaptiveScrabbleQLearner:
             )
         
         # Train Q-learning multiple times
+        td_errors = []
         num_training_steps = min(len(episode_experiences), 5)
+        
         for _ in range(num_training_steps):
-            self.train_on_batch()
+            td_error = self.train_on_batch()
+            if td_error is not None:  # Only append if not None
+                td_errors.append(abs(td_error))
         
         # Update episode stats
         self.training_episodes += 1
         self._decay_epsilon()
         
+        # Store last TD error (use 0.0 if no valid errors)
+        self.last_td_error = np.mean(td_errors) if td_errors else 0.0
+        
         # Process adaptive learning from episode
         self._process_adaptive_learning(episode_experiences)
+    
+    def get_last_td_error(self):
+        return self.last_td_error
+    
     
     def _process_adaptive_learning(self, episode_experiences: List[Dict]):
         """Process episode for adaptive component learning"""
@@ -1093,45 +1106,6 @@ class GreedyAgent:
         if not valid_moves:
             return None
         return max(valid_moves, key=lambda move: move.get('score', 0))
-
-class RandomAgent:
-    """Random baseline agent"""
-    
-    def __init__(self):
-        self.name = "Random"
-    
-    def choose_move(self, state: Dict, valid_moves: List[Dict], 
-                   training: bool = True) -> Optional[Dict]:
-        if not valid_moves:
-            return None
-        return random.choice(valid_moves)
-
-class HeuristicAgent:
-    """Heuristic baseline agent"""
-    
-    def __init__(self):
-        self.name = "Heuristic"
-    
-    def choose_move(self, state: Dict, valid_moves: List[Dict], 
-                   training: bool = True) -> Optional[Dict]:
-        if not valid_moves:
-            return None
-        
-        best_move = None
-        best_score = float('-inf')
-        
-        for move in valid_moves:
-            # Simple heuristic: immediate score + word length bonus
-            immediate_score = move.get('score', 0)
-            word_length = len(move.get('word', ''))
-            heuristic_score = immediate_score + word_length * 2
-            
-            if heuristic_score > best_score:
-                best_score = heuristic_score
-                best_move = move
-        
-        return best_move
-
 
 def main():
     """Test the adaptive agent"""

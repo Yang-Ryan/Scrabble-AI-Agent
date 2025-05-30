@@ -1,91 +1,136 @@
 """
-Enhanced Training System for Scrabble RL Agent
-Updated to work with Experience Replay and Target Networks
+Self-Play Training System for Scrabble RL Agent
+Train RL agent against itself with periodic greedy evaluation
 """
 
 import random
+import os
+import matplotlib.pyplot as plt
 import time
 import numpy as np
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime
+import copy
 
-# Import the enhanced agent instead of the basic one
-from scrabble_agent import GreedyAgent, RandomAgent
+from scrabble_agent import GreedyAgent
 from scrabble_agent import AdaptiveScrabbleQLearner
 from move_generator import MoveGenerator
 from utils import (create_empty_board, create_tile_bag, draw_tiles, 
                   place_word_on_board, get_rack_after_move, create_game_state,
                   save_game_data, format_time)
 
-class EnhancedScrabbleTrainer:
+class SelfPlayTrainer:
     """
-    Enhanced trainer that leverages Experience Replay and Target Networks
+    Advanced trainer that supports self-play training with periodic evaluation
     """
-    
     def __init__(self, dictionary_path: str = 'dictionary.txt'):
         self.move_generator = MoveGenerator(dictionary_path)
-        
-        # Enhanced training statistics
+        # Enhanced training statistics for self-play
         self.training_stats = {
             'episodes_completed': 0,
             'total_training_time': 0,
-            'win_rates_history': [],
-            'score_history': [],
+            'training_mode': '',  # 'self_play' or 'vs_greedy'
+            
+            # Self-play training stats
+            'self_play_scores_p1': [],     # Player 1 (main agent) scores
+            'self_play_scores_p2': [],     # Player 2 (opponent agent) scores  
+            'self_play_score_gaps': [],    # P1 - P2 score gaps
+            'self_play_wins': [],          # Who won each game (1 or 2)
+            
+            # Greedy evaluation stats
+            'greedy_eval_episodes': [],    # Which episodes had greedy eval
+            'greedy_eval_results': [],     # Evaluation results
+            'greedy_win_rates': [],        # Win rate vs greedy over time
+            'greedy_avg_scores': [],       # Average score vs greedy
+            'greedy_score_gaps': [],       # Score gaps vs greedy
+            
+            # Technical stats
             'weight_evolution': [],
-            'network_analysis': [],  # Track main vs target network differences
-            'buffer_statistics': [],  # Track experience buffer usage
-            'td_error_evolution': []  # Track learning progress
+            'network_analysis': [],
+            'buffer_statistics': [],
+            'td_error_evolution': []
         }
-    
-    def train_agent(self, agent: AdaptiveScrabbleQLearner, opponent_type: str = 'greedy',
-                   num_episodes: int = 1000, evaluation_interval: int = 100,
-                   save_interval: int = 500, verbose: bool = True) -> AdaptiveScrabbleQLearner:
+
+        os.makedirs('plot', exist_ok=True)
+
+    def train_self_play(self, agent: AdaptiveScrabbleQLearner, 
+                       num_episodes: int = 2000,
+                       greedy_eval_interval: int = 1,  # Evaluate vs greedy every episode
+                       greedy_eval_games: int = 3,     # 3 games vs greedy per evaluation
+                       verbose: bool = True) -> AdaptiveScrabbleQLearner:
         """
-        Train enhanced RL agent with experience replay and target networks
+        Train agent using self-play with periodic greedy evaluation
+        
+        Args:
+            agent: The RL agent to train
+            num_episodes: Number of self-play episodes
+            greedy_eval_interval: How often to evaluate vs greedy (1 = every episode)
+            greedy_eval_games: Number of games vs greedy per evaluation
+            verbose: Print progress updates
         """
         if verbose:
-            print(f"Training Enhanced Scrabble RL Agent")
-            print(f"Episodes: {num_episodes} vs {opponent_type}")
-            print(f"Experience Replay: Buffer size {agent.experience_buffer.max_size}, Batch size {agent.batch_size}")
+            print(f"🤖 SELF-PLAY TRAINING WITH GREEDY EVALUATION")
+            print(f"=" * 60)
+            print(f"Training Episodes: {num_episodes} (RL vs RL)")
+            print(f"Greedy Evaluation: Every {greedy_eval_interval} episode(s)")
+            print(f"Games per Evaluation: {greedy_eval_games}")
+            print(f"Experience Replay: Buffer {agent.experience_buffer.max_size}, Batch {agent.batch_size}")
             print(f"Target Network: Update every {agent.target_update_frequency} updates")
-            print("=" * 70)
+            print("=" * 60)
         
+        self.training_stats['training_mode'] = 'self_play'
         start_time = time.time()
-        opponent = self._create_opponent(opponent_type)
+        greedy_opponent = GreedyAgent()
         
         for episode in range(num_episodes):
             episode_start_time = time.time()
             
-            # Play one complete game
-            game_result = self._play_training_game(agent, opponent)
+            # 1. SELF-PLAY TRAINING GAME
+            # Create a copy of the agent for opponent (same weights, different exploration)
+            opponent_agent = self._create_opponent_agent(agent)
             
-            # Enhanced training: agent automatically handles experience replay
-            if game_result['experiences']:
-                agent.train_on_episode(game_result['experiences'])
+            # Play self-play game
+            game_result = self._play_self_play_game(agent, opponent_agent)
             
-            # Update statistics
+            # Train both agents from the game (they share the same network)
+            if game_result['agent_experiences']:
+                agent.train_on_episode(game_result['agent_experiences'])
+                td_error = agent.get_last_td_error()
+                self.training_stats['td_error_evolution'].append(td_error)
+            
+            # Store self-play results
+            self.training_stats['self_play_scores_p1'].append(game_result['agent_score'])
+            self.training_stats['self_play_scores_p2'].append(game_result['opponent_score'])
+            self.training_stats['self_play_score_gaps'].append(game_result['final_score_gap'])
+            self.training_stats['self_play_wins'].append(1 if game_result['agent_won'] else 2)
+            
             self.training_stats['episodes_completed'] += 1
             episode_time = time.time() - episode_start_time
             
-            # Periodic evaluation and enhanced reporting
-            if (episode + 1) % evaluation_interval == 0:
-                eval_results = self._evaluate_agent(agent, num_games=20)
-                network_analysis = agent.analyze_networks()
+            # 2. PERIODIC GREEDY EVALUATION
+            if (episode + 1) % greedy_eval_interval == 0:
+                eval_start_time = time.time()
                 
-                # Store comprehensive stats
-                eval_entry = {
-                    'episode': episode + 1,
-                    'win_rate': eval_results['win_rate'],
-                    'avg_score': eval_results['avg_score'],
-                    'avg_score_gap': eval_results['avg_score_gap']
-                }
-                self.training_stats['win_rates_history'].append(eval_entry)
+                # Evaluate current agent vs greedy
+                greedy_results = self._evaluate_vs_greedy(agent, greedy_opponent, greedy_eval_games)
+                
+                # Store evaluation results
+                self.training_stats['greedy_eval_episodes'].append(episode + 1)
+                self.training_stats['greedy_eval_results'].append(greedy_results)
+                self.training_stats['greedy_win_rates'].append(greedy_results['win_rate'])
+                self.training_stats['greedy_avg_scores'].append(greedy_results['avg_score'])
+                self.training_stats['greedy_score_gaps'].append(greedy_results['avg_score_gap'])
+                
+                eval_time = time.time() - eval_start_time
+                
+                # Network analysis
+                network_analysis = agent.analyze_networks()
                 self.training_stats['network_analysis'].append({
                     'episode': episode + 1,
                     **network_analysis
                 })
                 
-                # Track buffer usage
+                # Buffer statistics
                 buffer_stats = {
                     'episode': episode + 1,
                     'buffer_size': agent.experience_buffer.size(),
@@ -96,163 +141,173 @@ class EnhancedScrabbleTrainer:
                 self.training_stats['buffer_statistics'].append(buffer_stats)
                 
                 if verbose:
-                    self._print_enhanced_progress(episode + 1, eval_results, network_analysis, 
-                                                buffer_stats, episode_time)
-            
-            # Save model periodically
-            if (episode + 1) % save_interval == 0:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                model_path = f"enhanced_rl_model_{timestamp}_ep{episode+1}.json"
-                agent.save_model(model_path)
-                
-                if verbose:
-                    print(f"Enhanced model saved: {model_path}")
+                    self._print_self_play_progress(
+                        episode + 1, game_result, greedy_results, 
+                        network_analysis, buffer_stats, episode_time, eval_time
+                    )
+            elif verbose and (episode + 1) % 50 == 0:
+                # Print self-play progress without evaluation
+                print(f"Episode {episode + 1:4d} | "
+                      f"Self-Play: {game_result['agent_score']:3.0f} vs {game_result['opponent_score']:3.0f} | "
+                      f"Gap: {game_result['final_score_gap']:+4.0f} | "
+                      f"Time: {format_time(episode_time)}")
+
+        # Generate plots after training
+        self.plot_self_play_progress()
         
-        # Final statistics
-        total_training_time = time.time() - start_time
-        self.training_stats['total_training_time'] = total_training_time
+        total_time = time.time() - start_time
+        self.training_stats['total_training_time'] = total_time
         
         if verbose:
-            self._print_final_summary(agent, total_training_time)
+            self._print_final_self_play_summary()
         
         return agent
-    
-    def _create_opponent(self, opponent_type: str):
-        """Create opponent agent"""
-        if opponent_type == 'greedy':
-            return GreedyAgent()
-        elif opponent_type == 'random':
-            return RandomAgent()
-        else:
-            return GreedyAgent()
-    
-    def _play_training_game(self, agent: AdaptiveScrabbleQLearner, opponent) -> Dict:
+
+    def _create_opponent_agent(self, main_agent: AdaptiveScrabbleQLearner) -> AdaptiveScrabbleQLearner:
         """
-        Play training game - enhanced to properly store experiences
+        Create opponent agent that shares weights but has different exploration
         """
-        # Initialize game
+        # Create a copy with same architecture
+        opponent = AdaptiveScrabbleQLearner(
+            num_features=main_agent.num_features,
+            learning_rate=main_agent.learning_rate,
+            epsilon=main_agent.epsilon * 1.2,  # Slightly more exploration for diversity
+            gamma=main_agent.gamma,
+            buffer_size=main_agent.experience_buffer.max_size,
+            batch_size=main_agent.batch_size,
+            target_update_frequency=main_agent.target_update_frequency
+        )
+        
+        # Copy the main agent's weights
+        opponent.main_weights = main_agent.main_weights.copy()
+        opponent.target_weights = main_agent.target_weights.copy()
+        
+        # Copy adaptive components
+        opponent.adaptive_timing = copy.deepcopy(main_agent.adaptive_timing)
+        opponent.adaptive_tiles = copy.deepcopy(main_agent.adaptive_tiles)
+        
+        return opponent
+
+    def _play_self_play_game(self, agent1: AdaptiveScrabbleQLearner, 
+                            agent2: AdaptiveScrabbleQLearner) -> Dict:
+        """
+        Play a self-play game between two RL agents
+        """
         board = create_empty_board()
         tile_bag = create_tile_bag()
         
-        agent_rack = draw_tiles(tile_bag, 7)
-        opponent_rack = draw_tiles(tile_bag, 7)
+        agent1_rack = draw_tiles(tile_bag, 7)
+        agent2_rack = draw_tiles(tile_bag, 7)
         
-        agent_score = 0
-        opponent_score = 0
+        agent1_score = 0
+        agent2_score = 0
         rounds_played = 0
         max_rounds = 50
         
-        # Track experiences for training
-        agent_experiences = []
+        agent1_experiences = []
+        agent2_experiences = []  # We could use this for additional training
         
-        # Game loop
         while len(tile_bag) > 0 and rounds_played < max_rounds:
-            # Agent's turn
-            agent_state = create_game_state(
-                board, agent_rack, [], agent_score, opponent_score,
+            # Agent 1's turn
+            agent1_state = create_game_state(
+                board, agent1_rack, [], agent1_score, agent2_score,
                 len(tile_bag), rounds_played
             )
             
-            valid_moves = self.move_generator.get_valid_moves(
-                board, agent_rack, sampling_rate=0.3
+            valid_moves1 = self.move_generator.get_valid_moves(
+                board, agent1_rack, sampling_rate=0.3
             )
             
-            if valid_moves:
-                chosen_move = agent.choose_move(agent_state, valid_moves, training=True)
+            if valid_moves1:
+                chosen_move1 = agent1.choose_move(agent1_state, valid_moves1, training=True)
                 
-                if chosen_move:
-                    # Execute move
-                    old_state = agent_state.copy()
-                    board = place_word_on_board(board, chosen_move['word'], chosen_move['positions'])
-                    agent_score += chosen_move['score']
+                if chosen_move1:
+                    old_state1 = agent1_state.copy()
+                    board = place_word_on_board(board, chosen_move1['word'], chosen_move1['positions'])
+                    agent1_score += chosen_move1['score']
                     
-                    # Update agent rack
-                    tiles_drawn = draw_tiles(tile_bag, len(chosen_move['tiles_used']))
-                    agent_rack = get_rack_after_move(
-                        agent_rack, chosen_move['tiles_used'], tiles_drawn
+                    tiles_drawn1 = draw_tiles(tile_bag, len(chosen_move1['tiles_used']))
+                    agent1_rack = get_rack_after_move(
+                        agent1_rack, chosen_move1['tiles_used'], tiles_drawn1
                     )
                     
-                    # Create new state
-                    new_state = create_game_state(
-                        board, agent_rack, [], agent_score, opponent_score,
+                    new_state1 = create_game_state(
+                        board, agent1_rack, [], agent1_score, agent2_score,
                         len(tile_bag), rounds_played
                     )
                     
-                    # Calculate reward
-                    reward = agent.calculate_reward(old_state, new_state, chosen_move)
+                    reward1 = agent1.calculate_reward(old_state1, new_state1, chosen_move1)
                     
-                    # Store experience (enhanced format)
-                    experience = {
-                        'state': old_state,
-                        'move': chosen_move,
-                        'reward': reward,
-                        'next_state': new_state,
+                    experience1 = {
+                        'state': old_state1,
+                        'move': chosen_move1,
+                        'reward': reward1,
+                        'next_state': new_state1,
                         'terminal': False
                     }
-                    agent_experiences.append(experience)
+                    agent1_experiences.append(experience1)
             
-            # Opponent's turn (unchanged)
+            # Agent 2's turn (similar structure)
             if len(tile_bag) > 0:
-                opponent_state = create_game_state(
-                    board, opponent_rack, [], opponent_score, agent_score,
+                agent2_state = create_game_state(
+                    board, agent2_rack, [], agent2_score, agent1_score,
                     len(tile_bag), rounds_played
                 )
                 
-                opponent_moves = self.move_generator.get_valid_moves(
-                    board, opponent_rack, sampling_rate=0.5
+                valid_moves2 = self.move_generator.get_valid_moves(
+                    board, agent2_rack, sampling_rate=0.3
                 )
                 
-                if opponent_moves:
-                    opponent_move = opponent.choose_move(
-                        opponent_state, opponent_moves, training=False
-                    )
+                if valid_moves2:
+                    chosen_move2 = agent2.choose_move(agent2_state, valid_moves2, training=True)
                     
-                    if opponent_move:
-                        board = place_word_on_board(
-                            board, opponent_move['word'], opponent_move['positions']
-                        )
-                        opponent_score += opponent_move['score']
+                    if chosen_move2:
+                        board = place_word_on_board(board, chosen_move2['word'], chosen_move2['positions'])
+                        agent2_score += chosen_move2['score']
                         
-                        opponent_tiles_drawn = draw_tiles(tile_bag, len(opponent_move['tiles_used']))
-                        opponent_rack = get_rack_after_move(
-                            opponent_rack, opponent_move['tiles_used'], opponent_tiles_drawn
+                        tiles_drawn2 = draw_tiles(tile_bag, len(chosen_move2['tiles_used']))
+                        agent2_rack = get_rack_after_move(
+                            agent2_rack, chosen_move2['tiles_used'], tiles_drawn2
                         )
             
             rounds_played += 1
             
-            if not valid_moves and not opponent_moves:
+            if not valid_moves1 and not valid_moves2:
                 break
         
         # Mark final experience as terminal
-        if agent_experiences:
-            agent_experiences[-1]['terminal'] = True
+        if agent1_experiences:
+            agent1_experiences[-1]['terminal'] = True
         
-        # Calculate final results
-        final_score_gap = agent_score - opponent_score
-        agent_won = final_score_gap > 0
+        final_score_gap = agent1_score - agent2_score
+        agent1_won = final_score_gap > 0
         
         return {
-            'agent_score': agent_score,
-            'opponent_score': opponent_score,
+            'agent_score': agent1_score,
+            'opponent_score': agent2_score,
             'final_score_gap': final_score_gap,
-            'agent_won': agent_won,
+            'agent_won': agent1_won,
             'rounds_played': rounds_played,
-            'experiences': agent_experiences
+            'agent_experiences': agent1_experiences,
+            'opponent_experiences': agent2_experiences
         }
-    
-    def _evaluate_agent(self, agent: AdaptiveScrabbleQLearner, num_games: int = 50) -> Dict:
-        """Evaluate agent performance"""
+
+    def _evaluate_vs_greedy(self, agent: AdaptiveScrabbleQLearner, 
+                           greedy_opponent: GreedyAgent, num_games: int) -> Dict:
+        """
+        Evaluate agent performance against greedy opponent
+        """
         results = {
             'games_played': 0,
             'wins': 0,
             'total_score': 0,
+            'total_opponent_score': 0,
             'total_score_gap': 0,
             'win_rate': 0.0,
             'avg_score': 0.0,
+            'avg_opponent_score': 0.0,
             'avg_score_gap': 0.0
         }
-        
-        greedy_opponent = GreedyAgent()
         
         for _ in range(num_games):
             game_result = self._play_evaluation_game(agent, greedy_opponent)
@@ -262,16 +317,18 @@ class EnhancedScrabbleTrainer:
                 results['wins'] += 1
             
             results['total_score'] += game_result['agent_score']
+            results['total_opponent_score'] += game_result['opponent_score']
             results['total_score_gap'] += game_result['final_score_gap']
         
         # Calculate averages
         if results['games_played'] > 0:
             results['win_rate'] = results['wins'] / results['games_played']
             results['avg_score'] = results['total_score'] / results['games_played']
+            results['avg_opponent_score'] = results['total_opponent_score'] / results['games_played']
             results['avg_score_gap'] = results['total_score_gap'] / results['games_played']
         
         return results
-    
+
     def _play_evaluation_game(self, agent: AdaptiveScrabbleQLearner, opponent) -> Dict:
         """Play evaluation game (no training updates)"""
         board = create_empty_board()
@@ -295,9 +352,7 @@ class EnhancedScrabbleTrainer:
             valid_moves = self.move_generator.get_valid_moves(board, agent_rack)
             
             if valid_moves:
-                chosen_move = agent.choose_move(
-                    agent_state, valid_moves, training=False  # No exploration
-                )
+                chosen_move = agent.choose_move(agent_state, valid_moves, training=False)
                 
                 if chosen_move:
                     board = place_word_on_board(board, chosen_move['word'], chosen_move['positions'])
@@ -343,193 +398,361 @@ class EnhancedScrabbleTrainer:
             'agent_won': agent_score > opponent_score,
             'rounds_played': rounds_played
         }
-    
-    def _print_enhanced_progress(self, episode: int, eval_results: Dict, 
-                               network_analysis: Dict, buffer_stats: Dict, episode_time: float):
-        """Print enhanced training progress with network and buffer info"""
+
+    def _print_self_play_progress(self, episode: int, game_result: Dict, greedy_results: Dict,
+                                 network_analysis: Dict, buffer_stats: Dict, 
+                                 episode_time: float, eval_time: float):
+        """Print progress for self-play training"""
         print(f"Episode {episode:4d} | "
-              f"Win Rate: {eval_results['win_rate']:5.1%} | "
-              f"Avg Score: {eval_results['avg_score']:5.1f} | "
-              f"Score Gap: {eval_results['avg_score_gap']:+5.1f}")
+              f"Self-Play: {game_result['agent_score']:3.0f} vs {game_result['opponent_score']:3.0f} | "
+              f"Gap: {game_result['final_score_gap']:+4.0f}")
+        
+        print(f"             | "
+              f"vs Greedy: {greedy_results['win_rate']:5.1%} WR | "
+              f"Score: {greedy_results['avg_score']:5.1f} | "
+              f"Gap: {greedy_results['avg_score_gap']:+5.1f}")
         
         print(f"             | "
               f"Buffer: {buffer_stats['buffer_size']:4d}/{buffer_stats['buffer_utilization']*100:3.0f}% | "
-              f"Target Updates: {buffer_stats['target_updates']:3d} | "
-              f"Net Diff: {network_analysis['weight_difference_norm']:5.3f} | "
-              f"Time: {format_time(episode_time)}")
+              f"Updates: {buffer_stats['target_updates']:3d} | "
+              f"Time: {format_time(episode_time + eval_time)}")
+
+    def plot_self_play_progress(self):
+        """Generate comprehensive self-play training plots"""
         
-        # Show target network update progress
-        progress = network_analysis.get('target_update_progress', 0)
-        if progress > 0.8:
-            print(f"             | Target network update coming soon ({progress*100:.0f}%)")
-    
-    def _print_final_summary(self, agent: AdaptiveScrabbleQLearner, total_time: float):
-        """Print comprehensive final training summary"""
-        print("=" * 70)
-        print("ENHANCED TRAINING COMPLETED")
-        print("=" * 70)
-        print(f"Total training time: {format_time(total_time)}")
+        if not self.training_stats['self_play_scores_p1']:
+            print("No self-play data to plot")
+            return
         
-        # Final performance
-        if self.training_stats['win_rates_history']:
-            final_perf = self.training_stats['win_rates_history'][-1]
-            print(f"Final win rate: {final_perf['win_rate']:.1%}")
-            print(f"Final avg score: {final_perf['avg_score']:.1f}")
-            print(f"Final score gap: {final_perf['avg_score_gap']:+.1f}")
+        plt.figure(figsize=(20, 15))
         
-        # Enhanced training stats
-        training_stats = agent.get_training_stats()
-        print(f"\nEnhanced Training Statistics:")
-        print(f"  Total weight updates: {training_stats['total_updates']}")
-        print(f"  Target network updates: {training_stats['target_updates']}")
-        print(f"  Experience buffer size: {training_stats['buffer_size']}/{training_stats['buffer_max_size']}")
-        print(f"  Main-Target weight difference: {training_stats['weight_difference']:.4f}")
+        episodes = np.arange(1, len(self.training_stats['self_play_scores_p1']) + 1)
         
-        if 'avg_td_error' in training_stats:
-            print(f"  Recent avg TD error: {training_stats['avg_td_error']:.4f}")
+        # Plot 1: Self-Play Score Evolution
+        plt.subplot(3, 3, 1)
+        p1_scores = self.training_stats['self_play_scores_p1']
+        p2_scores = self.training_stats['self_play_scores_p2']
         
-        # Network analysis
-        print(f"\nNetwork Analysis:")
-        final_analysis = agent.analyze_networks()
-        print(f"  Network similarity: {final_analysis['network_similarity']:.3f}")
-        print(f"  Max weight difference: {final_analysis['max_weight_difference']:.4f}")
-        print(f"  Updates since last sync: {final_analysis['updates_since_sync']}")
+        plt.plot(episodes, p1_scores, alpha=0.6, label='Agent 1 (Main)', color='blue')
+        plt.plot(episodes, p2_scores, alpha=0.6, label='Agent 2 (Copy)', color='red')
         
-        # Feature importance comparison
-        print(f"\nFeature Importance (Main vs Target Networks):")
-        main_features = agent.get_feature_importance()
-        target_features = agent.get_target_feature_importance()
+        # Moving averages
+        window = max(1, len(episodes) // 20)
+        if len(episodes) >= window:
+            p1_ma = np.convolve(p1_scores, np.ones(window)/window, mode='valid')
+            p2_ma = np.convolve(p2_scores, np.ones(window)/window, mode='valid')
+            plt.plot(episodes[window-1:], p1_ma, label='Agent 1 MA', linestyle='--', color='darkblue')
+            plt.plot(episodes[window-1:], p2_ma, label='Agent 2 MA', linestyle='--', color='darkred')
         
-        for feature_name in main_features.keys():
-            main_weight = main_features[feature_name]
-            target_weight = target_features[feature_name]
-            diff = abs(main_weight - target_weight)
-            print(f"  {feature_name:15s}: Main {main_weight:6.3f} | Target {target_weight:6.3f} | Diff {diff:5.3f}")
-    
+        plt.xlabel('Episode')
+        plt.ylabel('Score')
+        plt.title('Self-Play Score Evolution')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Plot 2: Self-Play Score Gaps
+        plt.subplot(3, 3, 2)
+        score_gaps = self.training_stats['self_play_score_gaps']
+        plt.plot(episodes, score_gaps, alpha=0.6, color='purple')
+        plt.axhline(y=0, color='black', linestyle='-', alpha=0.5)
+        plt.fill_between(episodes, score_gaps, 0, where=(np.array(score_gaps) >= 0), 
+                        color='green', alpha=0.3, label='Agent 1 Wins')
+        plt.fill_between(episodes, score_gaps, 0, where=(np.array(score_gaps) < 0), 
+                        color='red', alpha=0.3, label='Agent 2 Wins')
+        plt.xlabel('Episode')
+        plt.ylabel('Score Gap (Agent 1 - Agent 2)')
+        plt.title('Self-Play Score Gaps')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Plot 3: Win Rate vs Greedy Over Time
+        plt.subplot(3, 3, 3)
+        if self.training_stats['greedy_eval_episodes']:
+            eval_episodes = self.training_stats['greedy_eval_episodes']
+            win_rates = [wr * 100 for wr in self.training_stats['greedy_win_rates']]
+            
+            plt.plot(eval_episodes, win_rates, marker='o', linewidth=2, 
+                    markersize=4, color='green', label='Win Rate vs Greedy')
+            plt.axhline(y=50, color='black', linestyle='--', alpha=0.5, label='50% (Even)')
+            plt.xlabel('Episode')
+            plt.ylabel('Win Rate vs Greedy (%)')
+            plt.title('Performance vs Greedy Over Training')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.ylim(0, 100)
+        
+        # Plot 4: Score vs Greedy Over Time
+        plt.subplot(3, 3, 4)
+        if self.training_stats['greedy_eval_episodes']:
+            eval_episodes = self.training_stats['greedy_eval_episodes']
+            agent_scores = self.training_stats['greedy_avg_scores']
+            
+            plt.plot(eval_episodes, agent_scores, marker='s', linewidth=2, 
+                    markersize=4, color='blue', label='Agent Score vs Greedy')
+            plt.xlabel('Episode')
+            plt.ylabel('Average Score vs Greedy')
+            plt.title('Score Performance vs Greedy')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+        
+        
+        # Plot 6: Score Gap vs Greedy Over Time
+        plt.subplot(3, 3, 5)
+        if self.training_stats['greedy_score_gaps']:
+            eval_episodes = self.training_stats['greedy_eval_episodes']
+            score_gaps = self.training_stats['greedy_score_gaps']
+            
+            plt.plot(eval_episodes, score_gaps, marker='d', linewidth=2, 
+                    markersize=4, color='orange', label='Score Gap vs Greedy')
+            plt.axhline(y=0, color='black', linestyle='-', alpha=0.5)
+            plt.xlabel('Episode')
+            plt.ylabel('Score Gap vs Greedy')
+            plt.title('Score Gap vs Greedy Over Training')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+        
+        # Plot 7: Score Distribution Comparison
+        plt.subplot(3, 3, 6)
+        plt.hist(p1_scores, bins=30, alpha=0.7, label='Agent 1', color='blue', density=True)
+        plt.hist(p2_scores, bins=30, alpha=0.7, label='Agent 2', color='red', density=True)
+        plt.axvline(np.mean(p1_scores), color='darkblue', linestyle='--', 
+                   label=f'Agent 1 Avg: {np.mean(p1_scores):.1f}')
+        plt.axvline(np.mean(p2_scores), color='darkred', linestyle='--', 
+                   label=f'Agent 2 Avg: {np.mean(p2_scores):.1f}')
+        plt.xlabel('Score')
+        plt.ylabel('Density')
+        plt.title('Self-Play Score Distributions')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Plot 8: TD Error Evolution
+        plt.subplot(3, 3, 7)
+        if self.training_stats['td_error_evolution']:
+            td_errors = self.training_stats['td_error_evolution']
+            td_episodes = np.arange(1, len(td_errors) + 1)
+            
+            plt.plot(td_episodes, td_errors, alpha=0.7, color='orange')
+            if len(td_errors) > 10:
+                td_window = max(1, len(td_errors) // 20)
+                td_ma = np.convolve(td_errors, np.ones(td_window)/td_window, mode='valid')
+                plt.plot(td_episodes[td_window-1:], td_ma, linestyle='--', linewidth=2, color='darkorange')
+            
+            plt.xlabel('Episode')
+            plt.ylabel('TD Error')
+            plt.title('TD Error Evolution')
+            plt.grid(True, alpha=0.3)
+
+        
+        
+        # Plot 11: Network Analysis
+        plt.subplot(3, 3, 8)
+        if self.training_stats['network_analysis']:
+            net_episodes = [entry['episode'] for entry in self.training_stats['network_analysis']]
+            weight_diffs = [entry['weight_difference_norm'] for entry in self.training_stats['network_analysis']]
+            
+            plt.plot(net_episodes, weight_diffs, marker='^', linewidth=2, 
+                    markersize=4, color='purple', label='Main-Target Weight Diff')
+            plt.xlabel('Episode')
+            plt.ylabel('Weight Difference Norm')
+            plt.title('Network Divergence')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+        
+        # Plot 12: Buffer Utilization
+        plt.subplot(3, 3, 9)
+        if self.training_stats['buffer_statistics']:
+            buf_episodes = [entry['episode'] for entry in self.training_stats['buffer_statistics']]
+            buf_utilization = [entry['buffer_utilization'] * 100 for entry in self.training_stats['buffer_statistics']]
+            
+            plt.plot(buf_episodes, buf_utilization, marker='x', linewidth=2, 
+                    markersize=4, color='brown', label='Buffer Utilization')
+            plt.xlabel('Episode')
+            plt.ylabel('Buffer Utilization (%)')
+            plt.title('Experience Replay Buffer Usage')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.ylim(0, 105)
+        
+        plt.tight_layout()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        plt.savefig(f'plot/self_play_training_{timestamp}.png', dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        print(f"Self-play training plots saved: plot/self_play_training_{timestamp}.png")
+
+    def _print_final_self_play_summary(self):
+        """Print comprehensive final summary"""
+        print(f"\n" + "="*70)
+        print(f"🤖 SELF-PLAY TRAINING COMPLETED")
+        print(f"="*70)
+        
+        episodes = len(self.training_stats['self_play_scores_p1'])
+        p1_avg = np.mean(self.training_stats['self_play_scores_p1'])
+        p2_avg = np.mean(self.training_stats['self_play_scores_p2'])
+        
+        print(f"Total Self-Play Episodes: {episodes}")
+        print(f"Agent 1 Average Score: {p1_avg:.1f}")
+        print(f"Agent 2 Average Score: {p2_avg:.1f}")
+        
+        # Self-play balance
+        wins = self.training_stats['self_play_wins']
+        agent1_wins = sum(1 for w in wins if w == 1)
+        agent1_win_rate = agent1_wins / len(wins) * 100
+        
+        print(f"Agent 1 Win Rate in Self-Play: {agent1_win_rate:.1f}%")
+        
+        if 45 <= agent1_win_rate <= 55:
+            print("✅ Self-play is well balanced!")
+        elif agent1_win_rate > 60:
+            print("⚠️ Agent 1 dominates - consider adjusting exploration")
+        else:
+            print("⚠️ Agent 2 dominates - this is unusual")
+        
+        # Greedy evaluation summary
+        if self.training_stats['greedy_win_rates']:
+            print(f"\n🎯 PERFORMANCE VS GREEDY:")
+            
+            early_wr = np.mean(self.training_stats['greedy_win_rates'][:5]) if len(self.training_stats['greedy_win_rates']) >= 5 else 0
+            recent_wr = np.mean(self.training_stats['greedy_win_rates'][-5:])
+            improvement = recent_wr - early_wr
+            
+            print(f"Early Win Rate vs Greedy: {early_wr:.1%}")
+            print(f"Final Win Rate vs Greedy: {recent_wr:.1%}")
+            print(f"Improvement: {improvement:+.1%}")
+            
+            final_score = np.mean(self.training_stats['greedy_avg_scores'][-5:])
+            final_gap = np.mean(self.training_stats['greedy_score_gaps'][-5:])
+            
+            print(f"Final Average Score vs Greedy: {final_score:.1f}")
+            print(f"Final Average Score Gap: {final_gap:+.1f}")
+            
+            if recent_wr > 0.7:
+                print("🚀 EXCELLENT - Agent dominates greedy opponent!")
+            elif recent_wr > 0.6:
+                print("✅ GOOD - Agent consistently beats greedy")
+            elif recent_wr > 0.5:
+                print("📊 FAIR - Agent is competitive with greedy")
+            else:
+                print("⚠️ NEEDS WORK - Agent struggles against greedy")
+            
+            if improvement > 0.2:
+                print("📈 Strong learning curve from self-play!")
+            elif improvement > 0.1:
+                print("📈 Good improvement from self-play")
+            elif improvement > 0:
+                print("📊 Modest improvement from self-play")
+            else:
+                print("📉 No clear improvement - may need more episodes")
+        
+        print(f"="*70)
+
     def get_training_summary(self) -> Dict:
-        """Get comprehensive enhanced training summary"""
+        """Get comprehensive training summary"""
         return {
             'training_stats': self.training_stats,
-            'final_performance': self.training_stats['win_rates_history'][-1] if self.training_stats['win_rates_history'] else None,
-            'final_network_analysis': self.training_stats['network_analysis'][-1] if self.training_stats['network_analysis'] else None,
-            'final_buffer_stats': self.training_stats['buffer_statistics'][-1] if self.training_stats['buffer_statistics'] else None
+            'training_mode': 'self_play',
+            'episodes_completed': self.training_stats['episodes_completed'],
+            'total_training_time': self.training_stats['total_training_time']
         }
-    
+
     def save_training_data(self, filepath: str):
-        """Save enhanced training statistics"""
+        """Save self-play training statistics"""
         training_data = {
             'training_stats': self.training_stats,
             'timestamp': datetime.now().isoformat(),
-            'enhancement_version': '2.0_with_replay_and_target'
+            'training_mode': 'self_play',
+            'version': '1.0_self_play_with_greedy_eval'
         }
         save_game_data(training_data, filepath)
-    
-    def compare_training_evolution(self) -> Dict:
-        """
-        Analyze how the training evolved with experience replay and target networks
-        """
-        if not self.training_stats['win_rates_history']:
-            return {}
-        
-        # Performance evolution
-        win_rates = [entry['win_rate'] for entry in self.training_stats['win_rates_history']]
-        episodes = [entry['episode'] for entry in self.training_stats['win_rates_history']]
-        
-        # Network evolution
-        network_diffs = []
-        target_updates = []
-        if self.training_stats['network_analysis']:
-            network_diffs = [entry['weight_difference_norm'] for entry in self.training_stats['network_analysis']]
-            target_updates = [entry['target_updates'] for entry in self.training_stats['network_analysis']]
-        
-        # Buffer evolution
-        buffer_utilization = []
-        if self.training_stats['buffer_statistics']:
-            buffer_utilization = [entry['buffer_utilization'] for entry in self.training_stats['buffer_statistics']]
-        
-        analysis = {
-            'performance_trend': {
-                'initial_win_rate': win_rates[0] if win_rates else 0,
-                'final_win_rate': win_rates[-1] if win_rates else 0,
-                'improvement': win_rates[-1] - win_rates[0] if len(win_rates) >= 2 else 0,
-                'peak_win_rate': max(win_rates) if win_rates else 0,
-                'stability': np.std(win_rates[-5:]) if len(win_rates) >= 5 else float('inf')
-            },
-            'network_dynamics': {
-                'final_weight_difference': network_diffs[-1] if network_diffs else 0,
-                'max_weight_difference': max(network_diffs) if network_diffs else 0,
-                'avg_weight_difference': np.mean(network_diffs) if network_diffs else 0,
-                'total_target_updates': target_updates[-1] if target_updates else 0
-            },
-            'buffer_usage': {
-                'final_buffer_utilization': buffer_utilization[-1] if buffer_utilization else 0,
-                'avg_buffer_utilization': np.mean(buffer_utilization) if buffer_utilization else 0
-            }
-        }
-        
-        return analysis
 
 
-def main():
-    """Main enhanced training function"""
-    print("Enhanced Scrabble RL Agent Training")
-    print("Features: Experience Replay + Target Networks")
+# Enhanced main.py functions for self-play
+def train_self_play_agent(args):
+    """Train agent using self-play with greedy evaluation"""
+    print("🤖 SELF-PLAY TRAINING MODE")
     print("=" * 50)
+    print(f"Episodes: {args.episodes} (RL vs RL)")
+    print(f"Greedy Evaluation: Every {args.greedy_eval_interval} episode(s)")
+    print(f"Games per Evaluation: {args.greedy_eval_games}")
+    print(f"Learning Rate: {args.learning_rate}")
+    print(f"Dictionary: {args.dictionary}")
+    print()
     
-    # Create enhanced agent with better hyperparameters
+    # Create agent
     agent = AdaptiveScrabbleQLearner(
         num_features=8,
-        learning_rate=0.01,
-        epsilon=0.3,
-        gamma=0.9,
-        buffer_size=5000,  # Experience replay buffer
-        batch_size=32,     # Batch size for replay
-        target_update_frequency=100,  # Update target network every 100 updates
-        min_buffer_size=500  # Start training when buffer has 500 experiences
+        learning_rate=args.learning_rate,
+        epsilon=args.epsilon,
+        gamma=args.gamma,
+        buffer_size=args.buffer_size,
+        batch_size=32,
+        target_update_frequency=100
     )
     
-    # Create enhanced trainer
-    trainer = EnhancedScrabbleTrainer('dictionary.txt')
+    # Create self-play trainer
+    trainer = SelfPlayTrainer(args.dictionary)
     
-    # Train agent with enhanced features
-    trained_agent = trainer.train_agent(
+    # Train with self-play
+    trained_agent = trainer.train_self_play(
         agent=agent,
-        opponent_type='greedy',
-        num_episodes=3000,  # More episodes to see benefit of enhancements
-        evaluation_interval=100,
-        save_interval=500,
+        num_episodes=args.episodes,
+        greedy_eval_interval=args.greedy_eval_interval,
+        greedy_eval_games=args.greedy_eval_games,
         verbose=True
     )
     
-    # Save final enhanced model
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    final_model_path = f"enhanced_rl_model_final_{timestamp}.json"
-    trained_agent.save_model(final_model_path)
-    
-    # Save enhanced training data
-    training_data_path = f"enhanced_training_data_{timestamp}.json"
-    trainer.save_training_data(training_data_path)
-    
-    print(f"\nEnhanced training completed!")
-    print(f"Final model saved: {final_model_path}")
-    print(f"Training data saved: {training_data_path}")
-    
-    # Print evolution analysis
-    evolution_analysis = trainer.compare_training_evolution()
-    if evolution_analysis:
-        print(f"\nTraining Evolution Analysis:")
-        perf = evolution_analysis['performance_trend']
-        print(f"  Performance improvement: {perf['improvement']:.1%}")
-        print(f"  Peak win rate: {perf['peak_win_rate']:.1%}")
-        print(f"  Final stability (std): {perf['stability']:.3f}")
+    # Save trained model
+    if args.save_model:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        model_path = f"self_play_model_{timestamp}_ep{args.episodes}.json"
+        trained_agent.save_model(model_path)
+        print(f"\nTrained model saved: {model_path}")
         
-        network = evolution_analysis['network_dynamics']
-        print(f"  Total target network updates: {network['total_target_updates']}")
-        print(f"  Final main-target difference: {network['final_weight_difference']:.4f}")
-        
-        buffer = evolution_analysis['buffer_usage']
-        print(f"  Final buffer utilization: {buffer['final_buffer_utilization']:.1%}")
+        # Save training data
+        training_data_path = f"self_play_data_{timestamp}.json"
+        trainer.save_training_data(training_data_path)
+        print(f"Training data saved: {training_data_path}")
+    
+    return trained_agent
+
+
+def main_with_self_play():
+    """Enhanced main function with self-play support"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Scrabble RL Agent with Self-Play Training')
+    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+    
+    # Self-play training command
+    self_play_parser = subparsers.add_parser('self-play', help='Train agent using self-play')
+    self_play_parser.add_argument('--episodes', type=int, default=2000,
+                                 help='Number of self-play episodes (default: 2000)')
+    self_play_parser.add_argument('--learning-rate', type=float, default=0.01,
+                                 help='Learning rate (default: 0.01)')
+    self_play_parser.add_argument('--epsilon', type=float, default=0.3,
+                                 help='Initial exploration rate (default: 0.3)')
+    self_play_parser.add_argument('--gamma', type=float, default=0.9,
+                                 help='Discount factor (default: 0.9)')
+    self_play_parser.add_argument('--buffer-size', type=int, default=5000,
+                                 help='Experience replay buffer size (default: 5000)')
+    self_play_parser.add_argument('--greedy-eval-interval', type=int, default=1,
+                                 help='Evaluate vs greedy every N episodes (default: 1)')
+    self_play_parser.add_argument('--greedy-eval-games', type=int, default=3,
+                                 help='Games vs greedy per evaluation (default: 3)')
+    self_play_parser.add_argument('--save-model', action='store_true',
+                                 help='Save trained model')
+    self_play_parser.add_argument('--dictionary', default='dictionary.txt',
+                                 help='Dictionary file path')
+    
+    args = parser.parse_args()
+    
+    if not args.command:
+        parser.print_help()
+        return
+    
+    if args.command == 'self-play':
+        train_self_play_agent(args)
 
 
 if __name__ == "__main__":
-    main()
+    main_with_self_play()

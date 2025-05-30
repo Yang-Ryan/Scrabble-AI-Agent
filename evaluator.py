@@ -10,7 +10,7 @@ from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 from collections import defaultdict
 
-from scrabble_agent import ScrabbleQLearner, GreedyAgent, RandomAgent, HeuristicAgent
+from scrabble_agent import ScrabbleQLearner, GreedyAgent
 from trainer import EnhancedScrabbleTrainer as ScrabbleTrainer
 from utils import save_game_data, format_time, generate_summary_stats
 
