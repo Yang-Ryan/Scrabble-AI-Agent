@@ -1,6 +1,6 @@
 """
-Main entry point for Scrabble RL Agent
-Handles training, evaluation, and analysis workflows
+Fixed Main entry point for Scrabble RL Agent
+Updated imports to match actual class names
 """
 
 import argparse
@@ -8,8 +8,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from scrabble_agent import ScrabbleQLearner, GreedyAgent, RandomAgent, HeuristicAgent
-from trainer import ScrabbleTrainer
+# FIXED IMPORTS - use the actual class names from your files
+from scrabble_agent import AdaptiveScrabbleQLearner, GreedyAgent, RandomAgent, HeuristicAgent
+from trainer import EnhancedScrabbleTrainer  # Changed from ScrabbleTrainer
 from evaluator import ScrabbleEvaluator
 from utils import save_game_data
 
@@ -24,15 +25,18 @@ def train_agent(args):
     print()
     
     # Create agent with specified parameters
-    agent = ScrabbleQLearner(
+    agent = AdaptiveScrabbleQLearner(  # Using the actual class name
         num_features=8,
         learning_rate=args.learning_rate,
         epsilon=args.epsilon,
-        gamma=args.gamma
+        gamma=args.gamma,
+        buffer_size=2000,  # Add buffer parameters
+        batch_size=32,
+        target_update_frequency=100
     )
     
-    # Create trainer
-    trainer = ScrabbleTrainer(args.dictionary)
+    # Create trainer - FIXED class name
+    trainer = EnhancedScrabbleTrainer(args.dictionary)
     
     # Train agent
     trained_agent = trainer.train_agent(
@@ -58,7 +62,7 @@ def train_agent(args):
     
     # Final performance summary
     summary = trainer.get_training_summary()
-    if summary['final_performance']:
+    if summary.get('final_performance'):
         perf = summary['final_performance']
         print(f"\nFinal Training Performance:")
         print(f"Win Rate: {perf['win_rate']:.1%}")
@@ -81,7 +85,7 @@ def evaluate_agent(args):
         print(f"Error: Model file not found: {args.model_path}")
         return None
     
-    agent = ScrabbleQLearner()
+    agent = AdaptiveScrabbleQLearner()  # Using actual class name
     agent.load_model(args.model_path)
     
     print(f"Loaded agent with {agent.training_episodes} training episodes")
@@ -122,7 +126,7 @@ def analyze_agent(args):
         print(f"Error: Model file not found: {args.model_path}")
         return None
     
-    agent = ScrabbleQLearner()
+    agent = AdaptiveScrabbleQLearner()  # Using actual class name
     agent.load_model(args.model_path)
     
     # Feature importance analysis
@@ -137,7 +141,7 @@ def analyze_agent(args):
     for i, (feature_name, weight) in enumerate(sorted_features, 1):
         importance_bar = "█" * int(abs(weight) * 20) if abs(weight) > 0 else ""
         sign = "+" if weight >= 0 else "-"
-        print(f"{i:2d}. {feature_name:15s} {sign}{abs(weight):6.3f} {importance_bar}")
+        print(f"{i:2d}. {feature_name:20s} {sign}{abs(weight):6.3f} {importance_bar}")
     
     # Training statistics
     print(f"\nTraining Statistics:")
@@ -153,30 +157,20 @@ def analyze_agent(args):
     
     # Analyze weight patterns
     weights = [w for w in feature_importance.values()]
-    max_weight = max(abs(w) for w in weights)
+    max_weight = max(abs(w) for w in weights) if weights else 0
     
-    dominant_features = [name for name, weight in feature_importance.items() 
-                        if abs(weight) > max_weight * 0.7]
-    
-    if dominant_features:
-        print(f"• Agent heavily prioritizes: {', '.join(dominant_features)}")
-    
-    negative_features = [name for name, weight in feature_importance.items() 
-                        if weight < -0.1]
-    
-    if negative_features:
-        print(f"• Agent learned to avoid: {', '.join(negative_features)}")
-    
-    # Score gap focus
-    immediate_score_weight = feature_importance.get('Immediate Score', 0)
-    endgame_weight = feature_importance.get('Endgame Factor', 0)
-    
-    if endgame_weight > immediate_score_weight:
-        print("• Agent shows sophisticated timing - values endgame strategy over immediate scoring")
-    
-    rack_balance_weight = feature_importance.get('Rack Balance', 0)
-    if rack_balance_weight > immediate_score_weight * 0.5:
-        print("• Agent learned strong tile management - balances immediate vs future potential")
+    if max_weight > 0:
+        dominant_features = [name for name, weight in feature_importance.items() 
+                            if abs(weight) > max_weight * 0.7]
+        
+        if dominant_features:
+            print(f"• Agent heavily prioritizes: {', '.join(dominant_features)}")
+        
+        negative_features = [name for name, weight in feature_importance.items() 
+                            if weight < -0.1]
+        
+        if negative_features:
+            print(f"• Agent learned to avoid: {', '.join(negative_features)}")
     
     return agent
 
@@ -196,7 +190,7 @@ def compare_agents(args):
             print(f"Warning: Model file not found: {model_path}")
             continue
         
-        agent = ScrabbleQLearner()
+        agent = AdaptiveScrabbleQLearner()  # Using actual class name
         agent.load_model(model_path)
         
         # Use filename as agent name
@@ -278,8 +272,8 @@ def main():
     
     # Training command
     train_parser = subparsers.add_parser('train', help='Train a new RL agent')
-    train_parser.add_argument('--episodes', type=int, default=2000,
-                             help='Number of training episodes (default: 2000)')
+    train_parser.add_argument('--episodes', type=int, default=500,
+                             help='Number of training episodes (default: 500)')
     train_parser.add_argument('--learning-rate', type=float, default=0.01,
                              help='Learning rate (default: 0.01)')
     train_parser.add_argument('--epsilon', type=float, default=0.3,
@@ -288,10 +282,10 @@ def main():
                              help='Discount factor (default: 0.9)')
     train_parser.add_argument('--opponent', choices=['greedy', 'random', 'heuristic'], 
                              default='greedy', help='Training opponent type')
-    train_parser.add_argument('--eval-interval', type=int, default=100,
-                             help='Evaluation interval (default: 100)')
-    train_parser.add_argument('--save-interval', type=int, default=500,
-                             help='Model save interval (default: 500)')
+    train_parser.add_argument('--eval-interval', type=int, default=50,
+                             help='Evaluation interval (default: 50)')
+    train_parser.add_argument('--save-interval', type=int, default=250,
+                             help='Model save interval (default: 250)')
     train_parser.add_argument('--save-model', action='store_true',
                              help='Save trained model')
     train_parser.add_argument('--dictionary', default='dictionary.txt',
@@ -301,8 +295,8 @@ def main():
     eval_parser = subparsers.add_parser('evaluate', help='Evaluate a trained agent')
     eval_parser.add_argument('--model-path', required=True,
                             help='Path to trained model file')
-    eval_parser.add_argument('--eval-games', type=int, default=100,
-                            help='Games per opponent (default: 100)')
+    eval_parser.add_argument('--eval-games', type=int, default=200,
+                            help='Games per opponent (default: 200)')
     eval_parser.add_argument('--dictionary', default='dictionary.txt',
                             help='Dictionary file path')
     
