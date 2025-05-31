@@ -295,112 +295,127 @@ class SelfPlayTrainer:
             'opponent_experiences': agent2_experiences
         }
 
-    def _evaluate_vs_greedy(self, agent: AdaptiveScrabbleQLearner, 
-                           greedy_opponent: GreedyAgent, num_games: int) -> Dict:
+    def _train_vs_greedy(self, agent: AdaptiveScrabbleQLearner, num_episodes: int,
+                     evaluation_interval: int = 100, save_interval: int = 500, verbose: bool = True) -> AdaptiveScrabbleQLearner:
         """
-        Evaluate agent performance against greedy opponent
+        Train the agent against a GreedyAgent opponent.
         """
-        results = {
-            'games_played': 0,
-            'wins': 0,
-            'total_score': 0,
-            'total_opponent_score': 0,
-            'total_score_gap': 0,
-            'win_rate': 0.0,
-            'avg_score': 0.0,
-            'avg_opponent_score': 0.0,
-            'avg_score_gap': 0.0
-        }
-        
-        for _ in range(num_games):
-            game_result = self._play_evaluation_game(agent, greedy_opponent)
-            
-            results['games_played'] += 1
-            if game_result['agent_won']:
-                results['wins'] += 1
-            
-            results['total_score'] += game_result['agent_score']
-            results['total_opponent_score'] += game_result['opponent_score']
-            results['total_score_gap'] += game_result['final_score_gap']
-        
-        # Calculate averages
-        if results['games_played'] > 0:
-            results['win_rate'] = results['wins'] / results['games_played']
-            results['avg_score'] = results['total_score'] / results['games_played']
-            results['avg_opponent_score'] = results['total_opponent_score'] / results['games_played']
-            results['avg_score_gap'] = results['total_score_gap'] / results['games_played']
-        
-        return results
+        greedy_opponent = GreedyAgent()
+        self.training_logs = []
 
-    def _play_evaluation_game(self, agent: AdaptiveScrabbleQLearner, opponent) -> Dict:
-        """Play evaluation game (no training updates)"""
-        board = create_empty_board()
-        tile_bag = create_tile_bag()
-        
-        agent_rack = draw_tiles(tile_bag, 7)
-        opponent_rack = draw_tiles(tile_bag, 7)
-        
-        agent_score = 0
-        opponent_score = 0
-        rounds_played = 0
-        max_rounds = 50
-        
-        while len(tile_bag) > 0 and rounds_played < max_rounds:
-            # Agent's turn
-            agent_state = create_game_state(
-                board, agent_rack, [], agent_score, opponent_score,
-                len(tile_bag), rounds_played
-            )
+        for episode in range(1, num_episodes + 1):
+            board = create_empty_board()
+            tile_bag = create_tile_bag()
             
-            valid_moves = self.move_generator.get_valid_moves(board, agent_rack)
+            agent_rack = draw_tiles(tile_bag, 7)
+            opponent_rack = draw_tiles(tile_bag, 7)
             
-            if valid_moves:
-                chosen_move = agent.choose_move(agent_state, valid_moves, training=False)
-                
-                if chosen_move:
-                    board = place_word_on_board(board, chosen_move['word'], chosen_move['positions'])
-                    agent_score += chosen_move['score']
-                    
-                    tiles_drawn = draw_tiles(tile_bag, len(chosen_move['tiles_used']))
-                    agent_rack = get_rack_after_move(
-                        agent_rack, chosen_move['tiles_used'], tiles_drawn
-                    )
-            
-            # Opponent's turn
-            if len(tile_bag) > 0:
-                opponent_state = create_game_state(
-                    board, opponent_rack, [], opponent_score, agent_score,
+            agent_score = 0
+            opponent_score = 0
+            rounds_played = 0
+            max_rounds = 50
+
+            agent_experiences = []
+
+            while len(tile_bag) > 0 and rounds_played < max_rounds:
+                # Agent's turn
+                agent_state = create_game_state(
+                    board, agent_rack, [], agent_score, opponent_score,
                     len(tile_bag), rounds_played
                 )
+                valid_moves = self.move_generator.get_valid_moves(board, agent_rack)
                 
-                opponent_moves = self.move_generator.get_valid_moves(board, opponent_rack)
-                
-                if opponent_moves:
-                    opponent_move = opponent.choose_move(opponent_state, opponent_moves, training=False)
-                    
-                    if opponent_move:
-                        board = place_word_on_board(
-                            board, opponent_move['word'], opponent_move['positions']
-                        )
-                        opponent_score += opponent_move['score']
+                if valid_moves:
+                    chosen_move = agent.choose_move(agent_state, valid_moves, training=True)
+                    if chosen_move:
+                        old_state = agent_state.copy()
+
+                        board = place_word_on_board(board, chosen_move['word'], chosen_move['positions'])
+                        agent_score += chosen_move['score']
                         
-                        opponent_tiles_drawn = draw_tiles(tile_bag, len(opponent_move['tiles_used']))
-                        opponent_rack = get_rack_after_move(
-                            opponent_rack, opponent_move['tiles_used'], opponent_tiles_drawn
+                        tiles_drawn = draw_tiles(tile_bag, len(chosen_move['tiles_used']))
+                        agent_rack = get_rack_after_move(agent_rack, chosen_move['tiles_used'], tiles_drawn)
+                        
+                        new_state = create_game_state(
+                            board, agent_rack, [], agent_score, opponent_score,
+                            len(tile_bag), rounds_played
                         )
+                        
+                        reward = agent.calculate_reward(old_state, new_state, chosen_move)
+
+                        # Record experience
+                        experience = {
+                            'state': old_state,
+                            'move': chosen_move,
+                            'reward': reward,
+                            'next_state': new_state,
+                            'terminal': False
+                        }
+                        agent_experiences.append(experience)
+
+                # Opponent's turn
+                if len(tile_bag) > 0:
+                    opponent_state = create_game_state(
+                        board, opponent_rack, [], opponent_score, agent_score,
+                        len(tile_bag), rounds_played
+                    )
+                    opponent_moves = self.move_generator.get_valid_moves(board, opponent_rack)
+                    
+                    if opponent_moves:
+                        opponent_move = greedy_opponent.choose_move(opponent_state, opponent_moves, training=False)
+                        if opponent_move:
+                            board = place_word_on_board(board, opponent_move['word'], opponent_move['positions'])
+                            opponent_score += opponent_move['score']
+                            
+                            opponent_tiles_drawn = draw_tiles(tile_bag, len(opponent_move['tiles_used']))
+                            opponent_rack = get_rack_after_move(opponent_rack, opponent_move['tiles_used'], opponent_tiles_drawn)
+
+                rounds_played += 1
+
+                if not valid_moves and not opponent_moves:
+                    break
+
+            if agent_experiences:
+                # Mark last move as terminal
+                agent_experiences[-1]['terminal'] = True
+
+                # Train after the game
+                agent.train_on_episode(agent_experiences)
             
-            rounds_played += 1
-            
-            if not valid_moves and not opponent_moves:
-                break
+            self.training_logs.append({
+                'episode': episode,
+                'agent_score': agent_score,
+                'opponent_score': opponent_score,
+                'final_score_gap': agent_score - opponent_score,
+                'agent_won': agent_score > opponent_score
+            })
+
+            if evaluation_interval > 0 and episode % evaluation_interval == 0:
+                wins = sum(1 for log in self.training_logs[-evaluation_interval:] if log['agent_won'])
+                avg_score = sum(log['agent_score'] for log in self.training_logs[-evaluation_interval:]) / evaluation_interval
+                avg_gap = sum(log['final_score_gap'] for log in self.training_logs[-evaluation_interval:]) / evaluation_interval
+
+                if verbose:
+                    print(f"[Episode {episode}] Win Rate: {wins / evaluation_interval:.1%}, "
+                        f"Avg Score: {avg_score:.1f}, Avg Gap: {avg_gap:+.1f}")
+
+            if save_interval > 0 and episode % save_interval == 0:
+                checkpoint_path = f"checkpoint_episode_{episode}.json"
+                agent.save_model(checkpoint_path)
+                if verbose:
+                    print(f"Model checkpoint saved: {checkpoint_path}")
         
-        return {
-            'agent_score': agent_score,
-            'opponent_score': opponent_score,
-            'final_score_gap': agent_score - opponent_score,
-            'agent_won': agent_score > opponent_score,
-            'rounds_played': rounds_played
+        final_wins = sum(1 for log in self.training_logs if log['agent_won'])
+        games_played = len(self.training_logs)
+        self.training_summary = {
+            'final_performance': {
+                'win_rate': final_wins / games_played if games_played > 0 else 0,
+                'avg_score': sum(log['agent_score'] for log in self.training_logs) / games_played if games_played > 0 else 0,
+                'avg_score_gap': sum(log['final_score_gap'] for log in self.training_logs) / games_played if games_played > 0 else 0
+            }
         }
+        
+        return agent
 
     def _print_self_play_progress(self, episode: int, game_result: Dict, greedy_results: Dict,
                                  network_analysis: Dict, buffer_stats: Dict, 

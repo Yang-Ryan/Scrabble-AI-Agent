@@ -12,7 +12,6 @@ from pathlib import Path
 from scrabble_agent import AdaptiveScrabbleQLearner, GreedyAgent
 from trainer import SelfPlayTrainer
 from utils import save_game_data
-from human_vs_ai_game import ScrabbleGameGUI
 
 def train_agent(args):
     """Train agent against greedy opponent"""
@@ -40,7 +39,7 @@ def train_agent(args):
     trainer = SelfPlayTrainer(args.dictionary)
     
     # Train agent against greedy opponent
-    trained_agent = trainer.train_vs_greedy(
+    trained_agent = trainer._train_vs_greedy(
         agent=agent,
         num_episodes=args.episodes,
         evaluation_interval=args.eval_interval,
