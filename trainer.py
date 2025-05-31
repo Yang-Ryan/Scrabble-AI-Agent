@@ -19,6 +19,9 @@ from utils import (create_empty_board, create_tile_bag, draw_tiles,
                   place_word_on_board, get_rack_after_move, create_game_state,
                   save_game_data, format_time)
 
+def moving_average(data, window_size=10):
+    return np.convolve(data, np.ones(window_size)/window_size, mode='valid')
+
 class SelfPlayTrainer:
     """
     Advanced trainer that supports self-play training with periodic evaluation
@@ -417,6 +420,8 @@ class SelfPlayTrainer:
               f"Updates: {buffer_stats['target_updates']:3d} | "
               f"Time: {format_time(episode_time + eval_time)}")
 
+   
+
     def plot_self_play_progress(self):
         """Generate comprehensive self-play training plots"""
         
@@ -465,46 +470,54 @@ class SelfPlayTrainer:
         plt.legend()
         plt.grid(True, alpha=0.3)
         
-        # Plot 3: Win Rate vs Greedy Over Time
+        # plot 3
         plt.subplot(3, 3, 3)
         if self.training_stats['greedy_eval_episodes']:
             eval_episodes = self.training_stats['greedy_eval_episodes']
             win_rates = [wr * 100 for wr in self.training_stats['greedy_win_rates']]
             
-            plt.plot(eval_episodes, win_rates, marker='o', linewidth=2, 
-                    markersize=4, color='green', label='Win Rate vs Greedy')
+            plt.scatter(eval_episodes, win_rates, s=10, color='lightgreen', label='Raw Win Rate')
+            smoothed_win_rate = moving_average(win_rates, window_size=10)
+            plt.plot(eval_episodes[:len(smoothed_win_rate)], smoothed_win_rate, 
+                    linewidth=2.5, color='green', label='Smoothed Win Rate')
             plt.axhline(y=50, color='black', linestyle='--', alpha=0.5, label='50% (Even)')
+            
             plt.xlabel('Episode')
             plt.ylabel('Win Rate vs Greedy (%)')
             plt.title('Performance vs Greedy Over Training')
             plt.legend()
             plt.grid(True, alpha=0.3)
             plt.ylim(0, 100)
-        
+
         # Plot 4: Score vs Greedy Over Time
         plt.subplot(3, 3, 4)
         if self.training_stats['greedy_eval_episodes']:
             eval_episodes = self.training_stats['greedy_eval_episodes']
             agent_scores = self.training_stats['greedy_avg_scores']
             
-            plt.plot(eval_episodes, agent_scores, marker='s', linewidth=2, 
-                    markersize=4, color='blue', label='Agent Score vs Greedy')
+            plt.scatter(eval_episodes, agent_scores, s=10, color='lightblue', label='Raw Scores')
+            smoothed_scores = moving_average(agent_scores, window_size=10)
+            plt.plot(eval_episodes[:len(smoothed_scores)], smoothed_scores, 
+                    linewidth=2.5, color='blue', label='Smoothed Score')
+            
             plt.xlabel('Episode')
             plt.ylabel('Average Score vs Greedy')
             plt.title('Score Performance vs Greedy')
             plt.legend()
             plt.grid(True, alpha=0.3)
-        
-        
+
         # Plot 6: Score Gap vs Greedy Over Time
         plt.subplot(3, 3, 5)
         if self.training_stats['greedy_score_gaps']:
             eval_episodes = self.training_stats['greedy_eval_episodes']
             score_gaps = self.training_stats['greedy_score_gaps']
             
-            plt.plot(eval_episodes, score_gaps, marker='d', linewidth=2, 
-                    markersize=4, color='orange', label='Score Gap vs Greedy')
+            plt.scatter(eval_episodes, score_gaps, s=10, color='navajowhite', label='Raw Score Gap')
+            smoothed_gaps = moving_average(score_gaps, window_size=10)
+            plt.plot(eval_episodes[:len(smoothed_gaps)], smoothed_gaps, 
+                    linewidth=2.5, color='orange', label='Smoothed Score Gap')
             plt.axhline(y=0, color='black', linestyle='-', alpha=0.5)
+            
             plt.xlabel('Episode')
             plt.ylabel('Score Gap vs Greedy')
             plt.title('Score Gap vs Greedy Over Training')

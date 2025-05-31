@@ -1,4 +1,5 @@
 ## Installation
+I recommend using virtual env
 
 ```bash
 # Clone the repository
@@ -18,6 +19,9 @@ $ source scrabble-env/bin/activate
 ## Training the RL Agent
 
 To train our model, you can add many command line args: 
+1. train with greedy agent (RL vs Greedy)
+2. train with yourself (RL vs RL) <- this method will provide a three-game evaluation with greedy agent at every episode  
+3. play game!
 
 ```bash
 python main.py train \
@@ -27,10 +31,7 @@ python main.py train \
     --gamma 0.95 \
     --eval-interval 25 \
     --save-model \
-    --dictionary example.txt
-ˋˋˋ
 
-```bash
 python main.py self-play \
     --episodes 5000 \
     --learning-rate 0.015 \
@@ -39,6 +40,8 @@ python main.py self-play \
     --greedy-eval-interval 5 \
     --greedy-eval-games 5 \
     --save-model
+
+python3 main.py play
 
 (scrabble-env) $ python3 main.py self-play --episodes 2000 --greedy-eval-games 3 --save-model
 (scrabble-env) $ python3 main.py train --episodes 500 --save-model

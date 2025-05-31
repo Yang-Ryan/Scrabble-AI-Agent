@@ -566,7 +566,8 @@ class AdaptiveScrabbleQLearner:
     def __init__(self, num_features: int = 8, learning_rate: float = 0.01, 
                  epsilon: float = 0.3, gamma: float = 0.9,
                  buffer_size: int = 10000, batch_size: int = 32,
-                 target_update_frequency: int = 100, min_buffer_size: int = 1000):
+                 target_update_frequency: int = 100, min_buffer_size: int = 1000,
+                 use_multi_horizon: bool = False):
         """Initialize adaptive agent"""
         
         # Core RL parameters
@@ -605,37 +606,60 @@ class AdaptiveScrabbleQLearner:
         # Track adaptive learning
         self.game_phases = []
         self.current_game_phase_info = {}
+
+        # Multi Horizon
+        self.use_multi_horizon = use_multi_horizon    # <--- NEW
+        if self.use_multi_horizon:
+            self.short_weights  = np.random.normal(0, 0.1, num_features)
+            self.medium_weights = np.random.normal(0, 0.1, num_features)
+            self.long_weights   = np.random.normal(0, 0.1, num_features)
+        else:
+            self.main_weights = np.random.normal(0, 0.1, num_features)
+            self.target_weights = self.main_weights.copy()
             
-    def choose_move(self, state: Dict, valid_moves: List[Dict], 
-                   training: bool = True) -> Optional[Dict]:
-        """Choose move using adaptive Q-learning"""
+    def choose_move(self, state: Dict, valid_moves: List[Dict], training: bool = True) -> Optional[Dict]:
         if not valid_moves:
             return None
-        
-        # Track decision for adaptive learning
-        if training:
-            self._track_game_phase(state)
-        
-        # Epsilon-greedy exploration
+
         if training and random.random() < self.epsilon:
             return random.choice(valid_moves)
-        
-        # Find best move using adaptive features
-        best_move = None
-        best_value = float('-inf')
-        
+
+        best_q, best_move = -np.inf, None
         for move in valid_moves:
-            # Extract features with adaptive components
-            features = self.feature_extractor.extract_features(state, move)
-            
-            # Predict Q-value
-            value = np.dot(self.main_weights, features)
-            
-            if value > best_value:
-                best_value = value
-                best_move = move
-        
-        return best_move if best_move else valid_moves[0]
+            φ = self.feature_extractor.extract_features(state, move)
+
+            if self.use_multi_horizon:
+                phase = self._get_phase(state)
+                if phase == 'early':
+                    a, b, c = 0.2, 0.3, 0.5
+                elif phase == 'mid':
+                    a, b, c = 0.3, 0.5, 0.2
+                else:
+                    a, b, c = 0.5, 0.3, 0.2
+
+                v_s = float(np.dot(self.short_weights,  φ))
+                v_m = float(np.dot(self.medium_weights, φ))
+                v_l = float(np.dot(self.long_weights,   φ))
+                q   = a * v_s + b * v_m + c * v_l
+            else:
+                q = float(np.dot(self.main_weights, φ))
+
+            if q > best_q:
+                best_q, best_move = q, move
+
+        return best_move
+
+    def _get_phase(self, state: Dict) -> str:
+        """Determine game phase based on tiles remaining"""
+        tiles_remaining = state.get('tiles_remaining', 98)
+        game_progress = 1.0 - (tiles_remaining / 98.0) if tiles_remaining <= 98 else 0.0
+
+        if game_progress < 0.3:
+            return 'early'
+        elif game_progress < 0.7:
+            return 'mid'
+        else:
+            return 'late'
     
     def _track_game_phase(self, state: Dict):
         """Track current game phase for adaptive learning"""
@@ -818,36 +842,38 @@ class AdaptiveScrabbleQLearner:
         self.target_weights = self.main_weights.copy()
         self.target_updates += 1
     
-    def train_on_episode(self, episode_experiences: List[Dict]):
-        """Process episode and train adaptive components"""
-        # Add experiences to buffer
-        for experience in episode_experiences:
-            self.add_experience(
-                experience['state'],
-                experience['move'],
-                experience['reward'],
-                experience.get('next_state'),
-                experience.get('terminal', False)
-            )
-        
-        # Train Q-learning multiple times
-        td_errors = []
-        num_training_steps = min(len(episode_experiences), 5)
-        
-        for _ in range(num_training_steps):
-            td_error = self.train_on_batch()
-            if td_error is not None:  # Only append if not None
-                td_errors.append(abs(td_error))
-        
-        # Update episode stats
+    def train_on_episode(self, experiences: List[Dict]):
+        for exp in experiences:
+            self.experience_buffer.add_experience(exp)
+
+        if self.use_multi_horizon:
+            T = len(experiences)
+            for i, exp in enumerate(experiences):
+                φ = self.feature_extractor.extract_features(exp['state'], exp['move'])
+                G_s = G_m = G_l = 0.0
+
+                for t in range(T - i):
+                    r = experiences[i + t]['reward']
+                    disc = self.gamma ** t
+                    G_l += disc * r
+                    if t < 2:
+                        G_s += disc * r
+                    if t < 5:
+                        G_m += disc * r
+
+                for attr, G in (('short_weights', G_s), ('medium_weights', G_m), ('long_weights', G_l)):
+                    w = getattr(self, attr)
+                    td = G - float(np.dot(w, φ))
+                    setattr(self, attr, w + self.learning_rate * td * φ)
+                    self.total_updates += 1
+
+        else:
+            for _ in range(min(len(experiences), 5)):
+                self.train_on_batch()
+
         self.training_episodes += 1
         self._decay_epsilon()
-        
-        # Store last TD error (use 0.0 if no valid errors)
-        self.last_td_error = np.mean(td_errors) if td_errors else 0.0
-        
-        # Process adaptive learning from episode
-        self._process_adaptive_learning(episode_experiences)
+        self._process_adaptive_learning(experiences)
     
     def get_last_td_error(self):
         return self.last_td_error

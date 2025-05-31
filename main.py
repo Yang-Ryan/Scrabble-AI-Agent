@@ -1,6 +1,6 @@
 """
 Enhanced Main entry point for Scrabble RL Agent
-Now supports both regular training and self-play training
+Now supports regular training, self-play training, and Human vs AI gameplay
 """
 
 import argparse
@@ -12,6 +12,7 @@ from pathlib import Path
 from scrabble_agent import AdaptiveScrabbleQLearner, GreedyAgent
 from trainer import SelfPlayTrainer
 from utils import save_game_data
+from human_vs_ai_game import ScrabbleGameGUI
 
 def train_agent(args):
     """Train agent against greedy opponent"""
@@ -31,16 +32,16 @@ def train_agent(args):
         gamma=args.gamma,
         buffer_size=2000,
         batch_size=32,
-        target_update_frequency=100
+        target_update_frequency=100,
+        use_multi_horizon=args.multi_horizon  
     )
     
-    # Create regular trainer
-    trainer = EnhancedScrabbleTrainer(args.dictionary)
+    # Create trainer
+    trainer = SelfPlayTrainer(args.dictionary)
     
-    # Train agent
-    trained_agent = trainer.train_agent(
+    # Train agent against greedy opponent
+    trained_agent = trainer.train_vs_greedy(
         agent=agent,
-        opponent_type=args.opponent,
         num_episodes=args.episodes,
         evaluation_interval=args.eval_interval,
         save_interval=args.save_interval,
@@ -70,8 +71,13 @@ def train_agent(args):
     
     return trained_agent
 
+
 def train_self_play_agent(args):
     """Train agent using self-play with greedy evaluation"""
+    if SelfPlayTrainer is None:
+        print("❌ Self-play trainer not available. Please check self_play_trainer.py")
+        return None
+    
     print("🤖 SELF-PLAY TRAINING MODE")
     print("=" * 50)
     print(f"Episodes: {args.episodes} (RL vs RL)")
@@ -89,7 +95,8 @@ def train_self_play_agent(args):
         gamma=args.gamma,
         buffer_size=args.buffer_size,
         batch_size=32,
-        target_update_frequency=100
+        target_update_frequency=100,
+        use_multi_horizon=args.multi_horizon  
     )
     
     # Create self-play trainer
@@ -117,6 +124,32 @@ def train_self_play_agent(args):
         print(f"Training data saved: {training_data_path}")
     
     return trained_agent
+
+def play_vs_human(args):
+    """Launch Human vs AI game interface"""
+    print("🎮 LAUNCHING HUMAN VS AI GAME")
+    print("=" * 40)
+
+    try:
+        game = ScrabbleGameGUI(dictionary_path=args.dictionary)
+
+        # 自動載入 model
+        if getattr(args, 'model_path', None):
+            if Path(args.model_path).exists():
+                agent = AdaptiveScrabbleQLearner()
+                agent.load_model(args.model_path)
+                game.ai_agent = agent
+                game.ai_status_label.config(text="AI Loaded ✅", fg='#27ae60')
+                game.log_message(f"🤖 Auto-loaded: {Path(args.model_path).name}")
+            else:
+                print(f"⚠️ Model not found: {args.model_path}")
+        
+        game.run()
+
+    except Exception as e:
+        print(f"❌ Error launching game: {e}")
+        import traceback
+        traceback.print_exc()
 
 def evaluate_agent(args):
     """Evaluate a trained agent against greedy opponent"""
@@ -154,63 +187,6 @@ def evaluate_agent(args):
     
     return results
 
-def analyze_agent(args):
-    """Deep analysis of agent behavior"""
-    print("🔍 AGENT ANALYSIS")
-    print("=" * 40)
-    
-    # Load agent
-    if not Path(args.model_path).exists():
-        print(f"Error: Model file not found: {args.model_path}")
-        return None
-    
-    agent = AdaptiveScrabbleQLearner()
-    agent.load_model(args.model_path)
-    
-    # Feature importance analysis
-    print("\n📊 Feature Importance Analysis:")
-    print("-" * 35)
-    feature_importance = agent.get_feature_importance()
-    
-    # Sort by absolute importance
-    sorted_features = sorted(feature_importance.items(), 
-                           key=lambda x: abs(x[1]), reverse=True)
-    
-    for i, (feature_name, weight) in enumerate(sorted_features, 1):
-        importance_bar = "█" * int(abs(weight) * 20) if abs(weight) > 0 else ""
-        sign = "+" if weight >= 0 else "-"
-        print(f"{i:2d}. {feature_name:25s} {sign}{abs(weight):6.3f} {importance_bar}")
-    
-    # Training statistics
-    print(f"\n📈 Training Statistics:")
-    print("-" * 22)
-    stats = agent.get_training_stats()
-    print(f"Training Episodes: {stats['training_episodes']}")
-    print(f"Total Updates: {stats['total_updates']}")
-    print(f"Current Epsilon: {stats['current_epsilon']:.3f}")
-    print(f"Buffer Size: {stats['buffer_size']}/{stats['buffer_max_size']}")
-    
-    # Adaptive learning stats
-    print(f"\n🤖 Adaptive Learning:")
-    print("-" * 19)
-    timing_stats = agent.get_timing_stats()
-    if timing_stats:
-        urgency_levels = timing_stats.get('urgency_levels', [])
-        transition_points = timing_stats.get('transition_points', [])
-        print(f"Urgency Strategy: {[f'{u:.2f}' for u in urgency_levels]}")
-        print(f"Transition Points: {[f'{t:.2f}' for t in transition_points]}")
-    
-    tile_stats = agent.get_tile_stats()
-    if tile_stats:
-        changed_tiles = tile_stats.get('significantly_changed_tiles', {})
-        if changed_tiles:
-            print(f"Learned Tile Values:")
-            for tile, multiplier in sorted(changed_tiles.items(), 
-                                         key=lambda x: abs(x[1] - 1.0), reverse=True)[:5]:
-                print(f"  {tile}: {multiplier:.2f}x strategic value")
-    
-    return agent
-
 def print_evaluation_summary(results):
     """Print formatted evaluation summary"""
     print("\n" + "="*50)
@@ -240,7 +216,7 @@ def print_evaluation_summary(results):
 
 def main():
     """Main entry point with enhanced argument parsing"""
-    parser = argparse.ArgumentParser(description='Scrabble RL Agent - Enhanced Training & Analysis')
+    parser = argparse.ArgumentParser(description='🎮 Scrabble RL Agent - Training, Analysis & Human Play')
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
     
     # Regular training command
@@ -263,78 +239,81 @@ def main():
                              help='Save trained model')
     train_parser.add_argument('--dictionary', default='dictionary.txt',
                              help='Dictionary file path')
+    train_parser.add_argument('--multi-horizon', action='store_true',
+                           help='Use multi-horizon learning')
     
     # Self-play training command
-    self_play_parser = subparsers.add_parser('self-play', help='Train agent using self-play')
-    self_play_parser.add_argument('--episodes', type=int, default=2000,
-                                 help='Number of self-play episodes (default: 2000)')
-    self_play_parser.add_argument('--learning-rate', type=float, default=0.01,
-                                 help='Learning rate (default: 0.01)')
-    self_play_parser.add_argument('--epsilon', type=float, default=0.3,
-                                 help='Initial exploration rate (default: 0.3)')
-    self_play_parser.add_argument('--gamma', type=float, default=0.9,
-                                 help='Discount factor (default: 0.9)')
-    self_play_parser.add_argument('--buffer-size', type=int, default=5000,
-                                 help='Experience replay buffer size (default: 5000)')
-    self_play_parser.add_argument('--greedy-eval-interval', type=int, default=1,
-                                 help='Evaluate vs greedy every N episodes (default: 1)')
-    self_play_parser.add_argument('--greedy-eval-games', type=int, default=3,
-                                 help='Games vs greedy per evaluation (default: 3)')
-    self_play_parser.add_argument('--save-model', action='store_true',
-                                 help='Save trained model')
-    self_play_parser.add_argument('--dictionary', default='dictionary.txt',
-                                 help='Dictionary file path')
+    if SelfPlayTrainer is not None:
+        self_play_parser = subparsers.add_parser('self-play', help='Train agent using self-play')
+        self_play_parser.add_argument('--episodes', type=int, default=2000,
+                                     help='Number of self-play episodes (default: 2000)')
+        self_play_parser.add_argument('--learning-rate', type=float, default=0.01,
+                                     help='Learning rate (default: 0.01)')
+        self_play_parser.add_argument('--epsilon', type=float, default=0.3,
+                                     help='Initial exploration rate (default: 0.3)')
+        self_play_parser.add_argument('--gamma', type=float, default=0.9,
+                                     help='Discount factor (default: 0.9)')
+        self_play_parser.add_argument('--buffer-size', type=int, default=5000,
+                                     help='Experience replay buffer size (default: 5000)')
+        self_play_parser.add_argument('--greedy-eval-interval', type=int, default=1,
+                                     help='Evaluate vs greedy every N episodes (default: 1)')
+        self_play_parser.add_argument('--greedy-eval-games', type=int, default=3,
+                                     help='Games vs greedy per evaluation (default: 3)')
+        self_play_parser.add_argument('--save-model', action='store_true',
+                                     help='Save trained model')
+        self_play_parser.add_argument('--dictionary', default='dictionary.txt',
+                                     help='Dictionary file path')
+        self_play_parser.add_argument('--multi-horizon', action='store_true',
+                           help='Use multi-horizon learning')
     
-    # Evaluation command
-    eval_parser = subparsers.add_parser('evaluate', help='Evaluate a trained agent')
-    eval_parser.add_argument('--model-path', required=True,
-                            help='Path to trained model file')
-    eval_parser.add_argument('--eval-games', type=int, default=100,
-                            help='Number of evaluation games (default: 100)')
-    eval_parser.add_argument('--dictionary', default='dictionary.txt',
-                            help='Dictionary file path')
-    
-    # Analysis command
-    analyze_parser = subparsers.add_parser('analyze', help='Analyze agent behavior')
-    analyze_parser.add_argument('--model-path', required=True,
-                               help='Path to trained model file')
-    
-    # Comparison command
-    compare_parser = subparsers.add_parser('compare', help='Compare multiple models')
-    compare_parser.add_argument('--model-paths', nargs='+', required=True,
-                               help='Paths to model files to compare')
-    compare_parser.add_argument('--comparison-games', type=int, default=50,
-                               help='Games per model vs greedy (default: 50)')
-    compare_parser.add_argument('--dictionary', default='dictionary.txt',
-                               help='Dictionary file path')
+    # human vs ai
+    play_parser = subparsers.add_parser('play', help="Play against trained AI agent")
+    play_parser.add_argument('--model-path', type=str, help="Path to AI model file")
+    play_parser.add_argument('--dictionary', type=str, default='dictionary.txt', help="Path to dictionary file")
+
+    args = parser.parse_args()
+
+    if args.command == 'play':
+        play_vs_human(args)
+    else:
+        parser.print_help()
     
     # Parse arguments
     args = parser.parse_args()
     
     if not args.command:
         print("🎮 Scrabble RL Agent")
-        print("=" * 20)
+        print("=" * 25)
         print("Available commands:")
         print("  train     - Train agent vs greedy opponent")
-        print("  self-play - Train agent using self-play")
+        if SelfPlayTrainer is not None:
+            print("  self-play - Train agent using self-play")
+        print("  play      - 🎮 Play against AI (GUI mode)")
         print("  evaluate  - Evaluate trained model")
         print("  analyze   - Analyze model behavior")
         print("  compare   - Compare multiple models")
         print("\nUse --help with any command for details")
+        print("\n🎯 Quick start:")
+        print("  python main.py train --episodes 500 --save-model")
+        print("  python main.py play")
         return
     
     # Execute command
     try:
         if args.command == 'train':
             train_agent(args)
-        elif args.command == 'self-play':
+        elif args.command == 'self-play' and SelfPlayTrainer is not None:
             train_self_play_agent(args)
+        elif args.command == 'play':
+            play_vs_human(args)
         elif args.command == 'evaluate':
             evaluate_agent(args)
         elif args.command == 'analyze':
             analyze_agent(args)
         elif args.command == 'compare':
             compare_models(args)
+        else:
+            print(f"❌ Unknown or unavailable command: {args.command}")
     except KeyboardInterrupt:
         print("\n⏹️  Operation cancelled by user")
     except Exception as e:
