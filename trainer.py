@@ -417,6 +417,94 @@ class SelfPlayTrainer:
         
         return agent
 
+
+    def _evaluate_vs_greedy(self, agent: AdaptiveScrabbleQLearner, 
+                        greedy_opponent: GreedyAgent, num_games: int) -> Dict:
+        """
+        Evaluate agent performance against greedy opponent (no training updates)
+        """
+        results = {
+            'games_played': 0,
+            'wins': 0,
+            'total_score': 0,
+            'total_opponent_score': 0,
+            'total_score_gap': 0,
+            'win_rate': 0.0,
+            'avg_score': 0.0,
+            'avg_opponent_score': 0.0,
+            'avg_score_gap': 0.0
+        }
+        
+        for _ in range(num_games):
+            board = create_empty_board()
+            tile_bag = create_tile_bag()
+            
+            agent_rack = draw_tiles(tile_bag, 7)
+            opponent_rack = draw_tiles(tile_bag, 7)
+            
+            agent_score = 0
+            opponent_score = 0
+            rounds_played = 0
+            max_rounds = 50
+            
+            while len(tile_bag) > 0 and rounds_played < max_rounds:
+                # Agent's turn
+                agent_state = create_game_state(
+                    board, agent_rack, [], agent_score, opponent_score,
+                    len(tile_bag), rounds_played
+                )
+                valid_moves = self.move_generator.get_valid_moves(board, agent_rack)
+                
+                if valid_moves:
+                    chosen_move = agent.choose_move(agent_state, valid_moves, training=False)
+                    if chosen_move:
+                        board = place_word_on_board(board, chosen_move['word'], chosen_move['positions'])
+                        agent_score += chosen_move['score']
+                        
+                        tiles_drawn = draw_tiles(tile_bag, len(chosen_move['tiles_used']))
+                        agent_rack = get_rack_after_move(agent_rack, chosen_move['tiles_used'], tiles_drawn)
+                
+                # Opponent's turn
+                if len(tile_bag) > 0:
+                    opponent_state = create_game_state(
+                        board, opponent_rack, [], opponent_score, agent_score,
+                        len(tile_bag), rounds_played
+                    )
+                    opponent_moves = self.move_generator.get_valid_moves(board, opponent_rack)
+                    
+                    if opponent_moves:
+                        opponent_move = greedy_opponent.choose_move(opponent_state, opponent_moves, training=False)
+                        if opponent_move:
+                            board = place_word_on_board(board, opponent_move['word'], opponent_move['positions'])
+                            opponent_score += opponent_move['score']
+                            
+                            opponent_tiles_drawn = draw_tiles(tile_bag, len(opponent_move['tiles_used']))
+                            opponent_rack = get_rack_after_move(opponent_rack, opponent_move['tiles_used'], opponent_tiles_drawn)
+                
+                rounds_played += 1
+                
+                if not valid_moves and not opponent_moves:
+                    break
+            
+            # Record results
+            results['games_played'] += 1
+            if agent_score > opponent_score:
+                results['wins'] += 1
+            
+            results['total_score'] += agent_score
+            results['total_opponent_score'] += opponent_score
+            results['total_score_gap'] += (agent_score - opponent_score)
+        
+        # Calculate averages
+        if results['games_played'] > 0:
+            results['win_rate'] = results['wins'] / results['games_played']
+            results['avg_score'] = results['total_score'] / results['games_played']
+            results['avg_opponent_score'] = results['total_opponent_score'] / results['games_played']
+            results['avg_score_gap'] = results['total_score_gap'] / results['games_played']
+        
+        return results
+
+
     def _print_self_play_progress(self, episode: int, game_result: Dict, greedy_results: Dict,
                                  network_analysis: Dict, buffer_stats: Dict, 
                                  episode_time: float, eval_time: float):
