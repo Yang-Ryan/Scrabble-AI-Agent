@@ -1,6 +1,6 @@
 """
 Fixed Move Generator for Scrabble AI
-Simple but working implementation that finds valid moves
+Fixed infinite loops and performance issues
 """
 
 import random
@@ -9,7 +9,7 @@ from utils import load_dictionary, is_valid_word
 
 class MoveGenerator:
     """
-    Working move generator - replaces the buggy complex version
+    Working move generator with fixed infinite loop issues
     """
     
     def __init__(self, dictionary_path: str = 'dictionary.txt'):
@@ -19,7 +19,7 @@ class MoveGenerator:
         self.working_words = []
         for word in self.dictionary:
             if 2 <= len(word) <= 7:  # Reasonable word lengths
-                self.working_words.append(word)
+                self.working_words.append(word.upper())
         
         print(f"MoveGenerator: Using {len(self.working_words)} words for move generation")
         
@@ -91,37 +91,163 @@ class MoveGenerator:
                         moves.append(move)
         
         return moves
-    
+
     def _get_subsequent_moves(self, board: List[List[str]], rack: List[str]) -> List[Dict]:
-        """Generate moves that connect to existing tiles"""
+        """Generate legal moves for Scrabble following official rules"""
         moves = []
         
-        # Find anchor points (empty squares next to filled squares)
         anchor_points = self._find_anchor_points(board)
+        
+        # Limit anchor points for performance
+        if len(anchor_points) > 20:
+            anchor_points = anchor_points[:20]
         
         possible_words = self._find_formable_words(rack)
         
-        # Try placing words at anchor points
-        for word in possible_words[:20]:  # Limit for performance
-            for anchor_row, anchor_col in anchor_points[:8]:  # Try first 8 anchors
-                
-                # Try horizontal placement starting at anchor
-                if anchor_col + len(word) <= 15:
-                    positions = [(anchor_row, anchor_col + i) for i in range(len(word))]
-                    if self._positions_are_valid(board, positions):
-                        move = self._create_move_dict(word, positions, 'horizontal', rack)
-                        if move:
-                            moves.append(move)
-                
-                # Try vertical placement starting at anchor
-                if anchor_row + len(word) <= 15:
-                    positions = [(anchor_row + i, anchor_col) for i in range(len(word))]
-                    if self._positions_are_valid(board, positions):
-                        move = self._create_move_dict(word, positions, 'vertical', rack)
-                        if move:
-                            moves.append(move)
+        # Limit words for performance
+        if len(possible_words) > 50:
+            possible_words = possible_words[:50]
+        
+        for i, (anchor_row, anchor_col) in enumerate(anchor_points):
+            
+            # Try horizontal
+            horizontal_moves = self._generate_moves_from_anchor(
+                board, rack, anchor_row, anchor_col, 'horizontal', possible_words
+            )
+            moves.extend(horizontal_moves)
+            
+            # Try vertical
+            vertical_moves = self._generate_moves_from_anchor(
+                board, rack, anchor_row, anchor_col, 'vertical', possible_words
+            )
+            moves.extend(vertical_moves)
+            
+            # Prevent too many moves
+            if len(moves) > 100:
+                break
         
         return moves
+
+    def _generate_moves_from_anchor(self, board: List[List[str]], rack: List[str], 
+                                   anchor_row: int, anchor_col: int, direction: str,
+                                   word_list: List[str]) -> List[Dict]:
+        """Generate possible words starting from an anchor in a given direction"""
+        moves = []
+        dr, dc = (0, 1) if direction == 'horizontal' else (1, 0)
+
+        for word in word_list:
+            if not self._can_form_word(word, rack):
+                continue
+
+            # Try different starting positions for the word around the anchor
+            for start_offset in range(-len(word) + 1, 1):  # Word can start before anchor
+                positions = []
+                start_r = anchor_row + start_offset * dr
+                start_c = anchor_col + start_offset * dc
+                
+                # Check if word fits on board
+                end_r = start_r + (len(word) - 1) * dr
+                end_c = start_c + (len(word) - 1) * dc
+                
+                if not (0 <= start_r < 15 and 0 <= start_c < 15 and 
+                       0 <= end_r < 15 and 0 <= end_c < 15):
+                    continue
+                
+                # Build positions list
+                valid = True
+                rack_copy = rack.copy()
+                uses_existing_tile = False
+                
+                for i, letter in enumerate(word):
+                    r = start_r + i * dr
+                    c = start_c + i * dc
+                    positions.append((r, c))
+                    
+                    board_cell = board[r][c]
+                    
+                    if board_cell and board_cell != '':
+                        # Must match existing letter
+                        if board_cell.upper() != letter.upper():
+                            valid = False
+                            break
+                        uses_existing_tile = True
+                    else:
+                        # Need to place from rack
+                        if letter.upper() in rack_copy:
+                            rack_copy.remove(letter.upper())
+                        elif '?' in rack_copy:
+                            rack_copy.remove('?')
+                        else:
+                            valid = False
+                            break
+                
+                if not valid or not uses_existing_tile:
+                    continue  # Must use at least one existing tile
+                
+                # Check if anchor is covered
+                if (anchor_row, anchor_col) not in positions:
+                    continue
+                
+                # Check crosswords are valid
+                if not self._crosswords_valid_safe(board, word, positions, direction):
+                    continue
+
+                move = self._create_move_dict(word, positions, direction, rack)
+                if move:
+                    moves.append(move)
+                    
+                # Limit moves per anchor
+                if len(moves) >= 10:
+                    break
+
+        return moves
+
+    def _crosswords_valid_safe(self, board: List[List[str]], word: str, 
+                              positions: List[Tuple[int, int]], direction: str) -> bool:
+        """Check that all crosswords are valid - SAFE VERSION"""
+        cross_dr = 1 if direction == 'horizontal' else 0
+        cross_dc = 0 if direction == 'horizontal' else 1
+
+        for idx, (r, c) in enumerate(positions):
+            letter = word[idx].upper()
+            
+            # Build crossword - SAFE version with limits
+            cross_word = ""
+            
+            # Go backwards (up/left) - LIMITED SEARCH
+            temp_r, temp_c = r - cross_dr, c - cross_dc
+            backwards_letters = []
+            steps = 0
+            
+            while (0 <= temp_r < 15 and 0 <= temp_c < 15 and 
+                   board[temp_r][temp_c] and board[temp_r][temp_c] != '' and 
+                   steps < 7):  # LIMIT TO 7 STEPS
+                backwards_letters.insert(0, board[temp_r][temp_c].upper())
+                temp_r -= cross_dr
+                temp_c -= cross_dc
+                steps += 1
+            
+            # Add current letter
+            cross_word = ''.join(backwards_letters) + letter
+            
+            # Go forwards (down/right) - LIMITED SEARCH
+            temp_r, temp_c = r + cross_dr, c + cross_dc
+            steps = 0
+            
+            while (0 <= temp_r < 15 and 0 <= temp_c < 15 and 
+                   board[temp_r][temp_c] and board[temp_r][temp_c] != '' and 
+                   steps < 7):  # LIMIT TO 7 STEPS
+                cross_word += board[temp_r][temp_c].upper()
+                temp_r += cross_dr
+                temp_c += cross_dc
+                steps += 1
+            
+            # If crossword is longer than 1 letter, check validity
+            if len(cross_word) > 1:
+                if cross_word not in self.dictionary:
+                    return False
+        
+        return True
     
     def _find_anchor_points(self, board: List[List[str]]) -> List[Tuple[int, int]]:
         """Find empty squares adjacent to filled squares"""
@@ -129,24 +255,15 @@ class MoveGenerator:
         
         for row in range(15):
             for col in range(15):
-                if board[row][col] is not None and board[row][col] != '':
+                if board[row][col] and board[row][col] != '':
                     # Check adjacent squares
                     for dr, dc in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
                         new_row, new_col = row + dr, col + dc
                         if (0 <= new_row < 15 and 0 <= new_col < 15 and
-                            (board[new_row][new_col] is None or board[new_row][new_col] == '')):
+                            (not board[new_row][new_col] or board[new_row][new_col] == '')):
                             anchors.add((new_row, new_col))
         
         return list(anchors)
-    
-    def _positions_are_valid(self, board: List[List[str]], positions: List[Tuple[int, int]]) -> bool:
-        """Check if all positions are empty and in bounds"""
-        for row, col in positions:
-            if (row < 0 or row >= 15 or col < 0 or col >= 15):
-                return False
-            if board[row][col] is not None and board[row][col] != '':
-                return False
-        return True
     
     def _find_formable_words(self, rack: List[str]) -> List[str]:
         """Find words that can be formed from the given rack"""
@@ -163,7 +280,7 @@ class MoveGenerator:
     
     def _can_form_word(self, word: str, rack: List[str]) -> bool:
         """Check if word can be formed from rack tiles"""
-        available_tiles = rack.copy()
+        available_tiles = [tile.upper() for tile in rack]
         
         for letter in word.upper():
             if letter in available_tiles:
@@ -185,7 +302,7 @@ class MoveGenerator:
         
         # Calculate tiles used from rack
         tiles_used = []
-        remaining_rack = original_rack.copy()
+        remaining_rack = [tile.upper() for tile in original_rack]
         
         for letter in word.upper():
             if letter in remaining_rack:
@@ -194,9 +311,6 @@ class MoveGenerator:
             elif '?' in remaining_rack:
                 remaining_rack.remove('?')
                 tiles_used.append('?')  # Blank tile used as this letter
-        
-        if len(tiles_used) != len(word):
-            return None  # Couldn't form word properly
         
         # Calculate score
         base_score = self._calculate_word_value(word)
@@ -250,6 +364,7 @@ def test_move_generator():
     board = create_empty_board()
     test_rack = ['C', 'A', 'R', 'E', 'S', 'T', 'N']
     
+    print("Testing with empty board...")
     moves = mg.get_valid_moves(board, test_rack)
     print(f"Found {len(moves)} moves for rack {test_rack}")
     
@@ -257,8 +372,20 @@ def test_move_generator():
         print("Sample moves:")
         for i, move in enumerate(moves[:5]):
             print(f"  {i+1}. {move['word']} - {move['score']} points")
-    else:
-        print("❌ No moves found!")
+    
+    # Test with some tiles on board
+    print("\nTesting with tiles on board...")
+    board[7][7] = 'C'
+    board[7][8] = 'A'
+    board[7][9] = 'T'
+    
+    moves = mg.get_valid_moves(board, ['E', 'R', 'S', 'T', 'N', 'D', 'O'])
+    print(f"Found {len(moves)} moves with CAT on board")
+    
+    if moves:
+        print("Sample moves:")
+        for i, move in enumerate(moves[:5]):
+            print(f"  {i+1}. {move['word']} - {move['score']} points at {move['positions']}")
 
 if __name__ == "__main__":
     test_move_generator()

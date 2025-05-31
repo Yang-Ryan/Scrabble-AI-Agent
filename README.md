@@ -30,6 +30,7 @@ python main.py train \
     --epsilon 0.4 \
     --gamma 0.95 \
     --eval-interval 25 \
+    --multi-horizon \
     --save-model \
 
 python main.py self-play \
@@ -39,6 +40,7 @@ python main.py self-play \
     --buffer-size 10000 \
     --greedy-eval-interval 5 \
     --greedy-eval-games 5 \
+    --multi-horizon \
     --save-model
 
 python3 main.py play
