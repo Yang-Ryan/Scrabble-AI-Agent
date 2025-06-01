@@ -1,19 +1,13 @@
-"""
-Enhanced Main entry point for Scrabble RL Agent
-Now supports regular training, self-play training, and Human vs AI gameplay
-"""
-
 import argparse
 import sys
+import numpy as np
 from datetime import datetime
 from pathlib import Path
 
-# Import all necessary components
 from scrabble_agent import AdaptiveScrabbleQLearner, GreedyAgent
-from trainer import SelfPlayTrainer
+from trainer import SelfPlayTrainer, ModelEvaluator
 from utils import save_game_data
 
-# Updated train_agent function
 def train_agent(args):
     """Train agent against greedy opponent with consistent arguments"""
     print("🎯 GREEDY TRAINING MODE")
@@ -75,10 +69,6 @@ def train_agent(args):
 
 def train_self_play_agent(args):
     """Train agent using self-play with greedy evaluation"""
-    if SelfPlayTrainer is None:
-        print("❌ Self-play trainer not available. Please check self_play_trainer.py")
-        return None
-    
     print("🤖 SELF-PLAY TRAINING MODE")
     print("=" * 50)
     print(f"Episodes: {args.episodes} (RL vs RL)")
@@ -132,9 +122,11 @@ def play_vs_human(args):
     print("=" * 40)
 
     try:
+        from scrabble_gui import ScrabbleGameGUI  # Import here to avoid dependency issues
+        
         game = ScrabbleGameGUI(dictionary_path=args.dictionary)
 
-        # 自動載入 model
+        # Auto-load model if specified
         if getattr(args, 'model_path', None):
             if Path(args.model_path).exists():
                 agent = AdaptiveScrabbleQLearner()
@@ -147,6 +139,8 @@ def play_vs_human(args):
         
         game.run()
 
+    except ImportError:
+        print("❌ GUI module not available. Please ensure scrabble_gui.py is present.")
     except Exception as e:
         print(f"❌ Error launching game: {e}")
         import traceback
@@ -155,132 +149,216 @@ def play_vs_human(args):
 def evaluate_agent(args):
     """Evaluate a trained agent against greedy opponent"""
     print("📊 AGENT EVALUATION")
-    print("=" * 40)
+    print("=" * 50)
     print(f"Model: {args.model_path}")
-    print(f"Games: {args.eval_games}")
+    print(f"Games: {args.games}")
     print(f"Dictionary: {args.dictionary}")
-    print()
+    if args.plot:
+        print("Plotting: Enabled")
+    elif args.no_plot:
+        print("Plotting: Disabled")
+    else:
+        print("Plotting: Auto (enabled for 50+ games)")
+    print("=" * 50)
     
     # Load trained agent
     if not Path(args.model_path).exists():
-        print(f"Error: Model file not found: {args.model_path}")
+        print(f"❌ Error: Model file not found: {args.model_path}")
         return None
     
-    agent = AdaptiveScrabbleQLearner()
-    agent.load_model(args.model_path)
+    try:
+        agent = AdaptiveScrabbleQLearner()
+        agent.load_model(args.model_path)
+        print(f"✅ Loaded agent with {agent.training_episodes} training episodes")
+    except Exception as e:
+        print(f"❌ Error loading model: {e}")
+        return None
     
-    print(f"Loaded agent with {agent.training_episodes} training episodes")
-    
-    # Create trainer for evaluation
-    trainer = EnhancedScrabbleTrainer(args.dictionary)
+    # Create evaluator
+    evaluator = ModelEvaluator(args.dictionary)
     
     # Run evaluation
-    results = trainer._evaluate_agent(agent, num_games=args.eval_games)
+    print(f"\n🎮 Starting evaluation: {args.games} games vs Greedy...")
+    results = evaluator.evaluate_vs_greedy(
+        agent=agent, 
+        num_games=args.games,
+        verbose=args.verbose
+    )
     
-    # Save evaluation results
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    results_path = f"evaluation_results_{timestamp}.json"
-    save_game_data(results, results_path)
-    print(f"\nResults saved: {results_path}")
-    
-    # Print summary
+    # Print results
     print_evaluation_summary(results)
+    
+    # Generate plots
+    should_plot = False
+    if args.plot:
+        should_plot = True
+    elif not args.no_plot and args.games >= 50:
+        should_plot = True
+        print(f"\n📊 Generating evaluation plots (use --no-plot to skip)...")
+    
+    if should_plot:
+        try:
+            plot_path = evaluator.plot_evaluation_results(results, save_plot=True)
+            if plot_path:
+                print(f"📈 Comprehensive evaluation plots saved: {plot_path}")
+        except Exception as e:
+            print(f"⚠️ Plot generation failed: {e}")
+    
+    # Save results if requested
+    if args.save_results:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        results_path = f"evaluation_results_{timestamp}.json"
+        save_game_data(results, results_path)
+        print(f"\n💾 Results saved: {results_path}")
     
     return results
 
 def print_evaluation_summary(results):
     """Print formatted evaluation summary"""
-    print("\n" + "="*50)
-    print("📊 EVALUATION SUMMARY")
-    print("="*50)
+    print("\n" + "="*60)
+    print("📊 EVALUATION RESULTS")
+    print("="*60)
     
-    print(f"\nPerformance vs Greedy Opponent:")
+    # Basic statistics
+    print(f"\n📈 Performance Metrics:")
+    print(f"  Total Games Played: {results.get('games_played', 0):>6d}")
+    print(f"  Wins: {results.get('wins', 0):>6d}")
+    print(f"  Losses: {results.get('games_played', 0) - results.get('wins', 0):>6d}")
     print(f"  Win Rate: {results.get('win_rate', 0):>6.1%}")
-    print(f"  Avg Score: {results.get('avg_score', 0):>5.1f}")
-    print(f"  Score Gap: {results.get('avg_score_gap', 0):>+5.1f}")
-    print(f"  Total Games: {results.get('games_played', 0):>4d}")
+    
+    print(f"\n🎯 Score Analysis:")
+    print(f"  Agent Average Score: {results.get('avg_score', 0):>6.1f}")
+    print(f"  Greedy Average Score: {results.get('avg_opponent_score', 0):>6.1f}")
+    print(f"  Score Gap (Agent - Greedy): {results.get('avg_score_gap', 0):>+6.1f}")
     
     # Performance assessment
     win_rate = results.get('win_rate', 0)
-    if win_rate > 0.7:
-        print(f"\n🚀 EXCELLENT - Dominates greedy opponent!")
-    elif win_rate > 0.6:
-        print(f"\n✅ GOOD - Consistently beats greedy opponent")
-    elif win_rate > 0.5:
-        print(f"\n📊 FAIR - Competitive with greedy opponent")
-    elif win_rate > 0.4:
-        print(f"\n⚠️ BELOW AVERAGE - Struggles against greedy")
+    print(f"\n🏆 Performance Assessment:")
+    if win_rate > 0.75:
+        print("  🚀 EXCELLENT - Dominates greedy opponent!")
+    elif win_rate > 0.65:
+        print("  ✅ VERY GOOD - Consistently beats greedy opponent")
+    elif win_rate > 0.55:
+        print("  👍 GOOD - Usually beats greedy opponent")
+    elif win_rate > 0.45:
+        print("  📊 COMPETITIVE - Evenly matched with greedy")
+    elif win_rate > 0.35:
+        print("  ⚠️ BELOW AVERAGE - Struggles against greedy")
     else:
-        print(f"\n❌ POOR - Loses consistently to greedy")
+        print("  ❌ POOR - Loses consistently to greedy")
     
-    print("="*50)
+    # Score analysis
+    score_gap = results.get('avg_score_gap', 0)
+    if abs(score_gap) < 5:
+        print("  🔍 Score margins are very close")
+    elif score_gap > 15:
+        print("  💪 Winning by significant score margins")
+    elif score_gap > 5:
+        print("  📈 Winning by comfortable margins")
+    elif score_gap < -15:
+        print("  📉 Losing by significant margins")
+    elif score_gap < -5:
+        print("  ⚠️ Losing by noticeable margins")
+    
+    # Additional insights
+    if 'detailed_results' in results:
+        games = results['detailed_results']
+        
+        # Biggest win/loss
+        wins_only = [g['score_gap'] for g in games if g['agent_won']]
+        losses_only = [g['score_gap'] for g in games if not g['agent_won']]
+        
+        biggest_win = max(wins_only) if wins_only else 0
+        biggest_loss = min(losses_only) if losses_only else 0
+        
+        print(f"\n🎲 Game Details:")
+        if biggest_win > 0:
+            print(f"  Biggest Victory Margin: +{biggest_win}")
+        if biggest_loss < 0:
+            print(f"  Biggest Defeat Margin: {biggest_loss}")
+        
+        # Score distribution
+        agent_scores = [g['agent_score'] for g in games]
+        if agent_scores:
+            print(f"  Agent Score Range: {min(agent_scores)} - {max(agent_scores)}")
+            print(f"  Agent Score Std Dev: {np.std(agent_scores):.1f}")
+    
+    print("="*60)
+
 
 def main():
     """Main entry point with enhanced argument parsing"""
-    parser = argparse.ArgumentParser(description='🎮 Scrabble RL Agent - Training, Analysis & Human Play')
+    parser = argparse.ArgumentParser(description='🎮 Scrabble RL Agent - Training, Evaluation & Human Play')
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
     
     # Regular training command (updated to match self-play pattern)
     train_parser = subparsers.add_parser('train', help='Train agent vs greedy opponent')
     train_parser.add_argument('--episodes', type=int, default=2000,
-                            help='Number of training episodes (default: 2000)')
+                             help='Number of training episodes (default: 2000)')
     train_parser.add_argument('--learning-rate', type=float, default=0.01,
-                            help='Learning rate (default: 0.01)')
+                             help='Learning rate (default: 0.01)')
     train_parser.add_argument('--epsilon', type=float, default=0.3,
-                            help='Initial exploration rate (default: 0.3)')
+                             help='Initial exploration rate (default: 0.3)')
     train_parser.add_argument('--gamma', type=float, default=0.9,
-                            help='Discount factor (default: 0.9)')
+                             help='Discount factor (default: 0.9)')
     train_parser.add_argument('--buffer-size', type=int, default=5000,
-                            help='Experience replay buffer size (default: 5000)')
+                             help='Experience replay buffer size (default: 5000)')
     train_parser.add_argument('--greedy-eval-interval', type=int, default=1,
-                            help='Evaluate vs greedy every N episodes (default: 1)')
+                             help='Evaluate vs greedy every N episodes (default: 1)')
     train_parser.add_argument('--greedy-eval-games', type=int, default=3,
-                            help='Games vs greedy per evaluation (default: 3)')
+                             help='Games vs greedy per evaluation (default: 3)')
     train_parser.add_argument('--save-model', action='store_true',
-                            help='Save trained model')
+                             help='Save trained model')
     train_parser.add_argument('--dictionary', default='dictionary.txt',
-                            help='Dictionary file path')
+                             help='Dictionary file path')
     train_parser.add_argument('--multi-horizon', action='store_true',
-                            help='Use multi-horizon learning')
+                             help='Use multi-horizon learning')
 
-    # Self-play training command (unchanged)
-    if SelfPlayTrainer is not None:
-        self_play_parser = subparsers.add_parser('self-play', help='Train agent using self-play')
-        self_play_parser.add_argument('--episodes', type=int, default=2000,
-                                    help='Number of self-play episodes (default: 2000)')
-        self_play_parser.add_argument('--learning-rate', type=float, default=0.01,
-                                    help='Learning rate (default: 0.01)')
-        self_play_parser.add_argument('--epsilon', type=float, default=0.3,
-                                    help='Initial exploration rate (default: 0.3)')
-        self_play_parser.add_argument('--gamma', type=float, default=0.9,
-                                    help='Discount factor (default: 0.9)')
-        self_play_parser.add_argument('--buffer-size', type=int, default=5000,
-                                    help='Experience replay buffer size (default: 5000)')
-        self_play_parser.add_argument('--greedy-eval-interval', type=int, default=1,
-                                    help='Evaluate vs greedy every N episodes (default: 1)')
-        self_play_parser.add_argument('--greedy-eval-games', type=int, default=3,
-                                    help='Games vs greedy per evaluation (default: 3)')
-        self_play_parser.add_argument('--save-model', action='store_true',
-                                    help='Save trained model')
-        self_play_parser.add_argument('--dictionary', default='dictionary.txt',
-                                    help='Dictionary file path')
-        self_play_parser.add_argument('--multi-horizon', action='store_true',
-                                    help='Use multi-horizon learning')
+    # Self-play training command
+    self_play_parser = subparsers.add_parser('self-play', help='Train agent using self-play')
+    self_play_parser.add_argument('--episodes', type=int, default=2000,
+                                 help='Number of self-play episodes (default: 2000)')
+    self_play_parser.add_argument('--learning-rate', type=float, default=0.01,
+                                 help='Learning rate (default: 0.01)')
+    self_play_parser.add_argument('--epsilon', type=float, default=0.3,
+                                 help='Initial exploration rate (default: 0.3)')
+    self_play_parser.add_argument('--gamma', type=float, default=0.9,
+                                 help='Discount factor (default: 0.9)')
+    self_play_parser.add_argument('--buffer-size', type=int, default=5000,
+                                 help='Experience replay buffer size (default: 5000)')
+    self_play_parser.add_argument('--greedy-eval-interval', type=int, default=1,
+                                 help='Evaluate vs greedy every N episodes (default: 1)')
+    self_play_parser.add_argument('--greedy-eval-games', type=int, default=3,
+                                 help='Games vs greedy per evaluation (default: 3)')
+    self_play_parser.add_argument('--save-model', action='store_true',
+                                 help='Save trained model')
+    self_play_parser.add_argument('--dictionary', default='dictionary.txt',
+                                 help='Dictionary file path')
+    self_play_parser.add_argument('--multi-horizon', action='store_true',
+                                 help='Use multi-horizon learning')
 
-
+    # Evaluation command
+    eval_parser = subparsers.add_parser('evaluate', help='Evaluate trained model against greedy opponent')
+    eval_parser.add_argument('games', type=int, 
+                            help='Number of games to play (e.g., 300)')
+    eval_parser.add_argument('--model-path', type=str, required=True,
+                            help='Path to trained model file')
+    eval_parser.add_argument('--dictionary', default='dictionary.txt',
+                            help='Dictionary file path')
+    eval_parser.add_argument('--verbose', action='store_true',
+                            help='Show detailed game-by-game results')
+    eval_parser.add_argument('--save-results', action='store_true',
+                            help='Save evaluation results to file')
+    eval_parser.add_argument('--plot', action='store_true',
+                            help='Generate comprehensive evaluation plots')
+    eval_parser.add_argument('--no-plot', action='store_true',
+                            help='Skip plot generation (faster evaluation)')
     
-    # human vs ai
+    # Human vs AI
     play_parser = subparsers.add_parser('play', help="Play against trained AI agent")
     play_parser.add_argument('--model-path', type=str, help="Path to AI model file")
     play_parser.add_argument('--dictionary', type=str, default='dictionary.txt', help="Path to dictionary file")
 
-    args = parser.parse_args()
-
-    if args.command == 'play':
-        play_vs_human(args)
-    else:
-        parser.print_help()
-    
     # Parse arguments
     args = parser.parse_args()
     
@@ -289,15 +367,13 @@ def main():
         print("=" * 25)
         print("Available commands:")
         print("  train     - Train agent vs greedy opponent")
-        if SelfPlayTrainer is not None:
-            print("  self-play - Train agent using self-play")
+        print("  self-play - Train agent using self-play")
+        print("  evaluate  - 📊 Evaluate trained model performance")
         print("  play      - 🎮 Play against AI (GUI mode)")
-        print("  evaluate  - Evaluate trained model")
-        print("  analyze   - Analyze model behavior")
-        print("  compare   - Compare multiple models")
         print("\nUse --help with any command for details")
         print("\n🎯 Quick start:")
         print("  python main.py train --episodes 500 --save-model")
+        print("  python main.py evaluate 300 --model-path your_model.json")
         print("  python main.py play")
         return
     
@@ -305,18 +381,15 @@ def main():
     try:
         if args.command == 'train':
             train_agent(args)
-        elif args.command == 'self-play' and SelfPlayTrainer is not None:
+        elif args.command == 'self-play':
             train_self_play_agent(args)
-        elif args.command == 'play':
-            play_vs_human(args)
         elif args.command == 'evaluate':
             evaluate_agent(args)
-        elif args.command == 'analyze':
-            analyze_agent(args)
-        elif args.command == 'compare':
-            compare_models(args)
+        elif args.command == 'play':
+            play_vs_human(args)
         else:
-            print(f"❌ Unknown or unavailable command: {args.command}")
+            print(f"❌ Unknown command: {args.command}")
+            parser.print_help()
     except KeyboardInterrupt:
         print("\n⏹️  Operation cancelled by user")
     except Exception as e:

@@ -64,13 +64,13 @@ class MoveGenerator:
         # Try words that can be formed from rack
         possible_words = self._find_formable_words(rack)
         
-        for word in possible_words[:30]:  # Limit for performance
+        for word in possible_words[:30]:
             # Try horizontal placement through center
             word_len = len(word)
             
             # Horizontal - center the word on center square
             start_col = max(0, center_col - word_len // 2)
-            if start_col + word_len <= 15:  # Fits on board
+            if start_col + word_len <= 15:
                 positions = [(center_row, start_col + i) for i in range(word_len)]
                 
                 # Make sure center square is used
@@ -81,7 +81,7 @@ class MoveGenerator:
             
             # Vertical - center the word on center square  
             start_row = max(0, center_row - word_len // 2)
-            if start_row + word_len <= 15:  # Fits on board
+            if start_row + word_len <= 15:
                 positions = [(start_row + i, center_col) for i in range(word_len)]
                 
                 # Make sure center square is used
@@ -122,7 +122,6 @@ class MoveGenerator:
             )
             moves.extend(vertical_moves)
             
-            # Prevent too many moves
             if len(moves) > 100:
                 break
         

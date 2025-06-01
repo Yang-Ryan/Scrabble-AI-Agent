@@ -1209,6 +1209,384 @@ class SelfPlayTrainer:
         save_game_data(training_data, filepath)
         print(f"Training data saved: {filepath} (mode: {training_mode})")
 
+class ModelEvaluator:
+    """
+    Evaluator class for testing trained models against opponents
+    """
+    
+    def __init__(self, dictionary_path: str = 'dictionary.txt'):
+        self.move_generator = MoveGenerator(dictionary_path)
+    
+    def evaluate_vs_greedy(self, agent: AdaptiveScrabbleQLearner, num_games: int,
+                          verbose: bool = False) -> Dict:
+        """
+        Evaluate agent performance against greedy opponent
+        
+        Args:
+            agent: Trained RL agent to evaluate
+            num_games: Number of games to play
+            verbose: Show detailed game-by-game progress
+            
+        Returns:
+            Dictionary with comprehensive evaluation results
+        """
+        print(f"🎮 Running evaluation: {num_games} games vs Greedy opponent...")
+        
+        greedy_opponent = GreedyAgent()
+        
+        # Results tracking
+        results = {
+            'games_played': 0,
+            'wins': 0,
+            'losses': 0,
+            'total_agent_score': 0,
+            'total_opponent_score': 0,
+            'total_score_gap': 0,
+            'detailed_results': [],
+            
+            # Will be calculated at the end
+            'win_rate': 0.0,
+            'loss_rate': 0.0,
+            'avg_score': 0.0,
+            'avg_opponent_score': 0.0,
+            'avg_score_gap': 0.0,
+            'score_std': 0.0,
+            'evaluation_timestamp': datetime.now().isoformat()
+        }
+        
+        start_time = time.time()
+        
+        for game_num in range(1, num_games + 1):
+            game_start_time = time.time()
+            
+            # Play one evaluation game
+            game_result = self._play_evaluation_game(agent, greedy_opponent)
+            
+            # Update results
+            results['games_played'] += 1
+            
+            agent_score = game_result['agent_score']
+            opponent_score = game_result['opponent_score']
+            score_gap = agent_score - opponent_score
+            agent_won = agent_score > opponent_score
+            
+            if agent_won:
+                results['wins'] += 1
+            else:
+                results['losses'] += 1
+            
+            results['total_agent_score'] += agent_score
+            results['total_opponent_score'] += opponent_score
+            results['total_score_gap'] += score_gap
+            
+            # Store detailed game result
+            game_detail = {
+                'game_number': game_num,
+                'agent_score': agent_score,
+                'opponent_score': opponent_score,
+                'score_gap': score_gap,
+                'agent_won': agent_won,
+                'rounds_played': game_result['rounds_played'],
+                'game_duration': time.time() - game_start_time
+            }
+            results['detailed_results'].append(game_detail)
+            
+            # Verbose progress reporting
+            if verbose:
+                win_symbol = "✅" if agent_won else "❌"
+                print(f"Game {game_num:3d}: {win_symbol} Agent {agent_score:3d} vs Greedy {opponent_score:3d} "
+                      f"(Gap: {score_gap:+3d}, Time: {format_time(time.time() - game_start_time)})")
+            
+            # Progress reporting every 50 games
+            elif game_num % 50 == 0:
+                current_win_rate = results['wins'] / results['games_played']
+                avg_score = results['total_agent_score'] / results['games_played']
+                avg_gap = results['total_score_gap'] / results['games_played']
+                elapsed_time = time.time() - start_time
+                
+                print(f"Progress: {game_num:3d}/{num_games} games | "
+                      f"Win Rate: {current_win_rate:5.1%} | "
+                      f"Avg Score: {avg_score:5.1f} | "
+                      f"Avg Gap: {avg_gap:+5.1f} | "
+                      f"Time: {format_time(elapsed_time)}")
+        
+        # Calculate final statistics
+        total_time = time.time() - start_time
+        
+        if results['games_played'] > 0:
+            results['win_rate'] = results['wins'] / results['games_played']
+            results['loss_rate'] = results['losses'] / results['games_played']
+            results['avg_score'] = results['total_agent_score'] / results['games_played']
+            results['avg_opponent_score'] = results['total_opponent_score'] / results['games_played']
+            results['avg_score_gap'] = results['total_score_gap'] / results['games_played']
+            
+            # Calculate score standard deviation
+            agent_scores = [g['agent_score'] for g in results['detailed_results']]
+            results['score_std'] = np.std(agent_scores) if len(agent_scores) > 1 else 0.0
+        
+        results['total_evaluation_time'] = total_time
+        results['avg_game_time'] = total_time / num_games if num_games > 0 else 0
+        
+        print(f"\n✅ Evaluation completed in {format_time(total_time)}")
+        print(f"📊 {results['games_played']} games played, "
+              f"{results['wins']} wins ({results['win_rate']:.1%})")
+        
+        return results
+    
+    def _play_evaluation_game(self, agent: AdaptiveScrabbleQLearner, 
+                             opponent) -> Dict:
+        """
+        Play a single evaluation game between agent and opponent
+        No training updates - pure evaluation
+        """
+        board = create_empty_board()
+        tile_bag = create_tile_bag()
+        
+        agent_rack = draw_tiles(tile_bag, 7)
+        opponent_rack = draw_tiles(tile_bag, 7)
+        
+        agent_score = 0
+        opponent_score = 0
+        rounds_played = 0
+        max_rounds = 50
+        
+        while len(tile_bag) > 0 and rounds_played < max_rounds:
+            # Agent's turn
+            agent_state = create_game_state(
+                board, agent_rack, [], agent_score, opponent_score,
+                len(tile_bag), rounds_played
+            )
+            valid_moves = self.move_generator.get_valid_moves(board, agent_rack)
+            
+            if valid_moves:
+                chosen_move = agent.choose_move(agent_state, valid_moves, training=False)
+                if chosen_move:
+                    board = place_word_on_board(board, chosen_move['word'], chosen_move['positions'])
+                    agent_score += chosen_move['score']
+                    
+                    tiles_drawn = draw_tiles(tile_bag, len(chosen_move['tiles_used']))
+                    agent_rack = get_rack_after_move(agent_rack, chosen_move['tiles_used'], tiles_drawn)
+            
+            # Opponent's turn
+            if len(tile_bag) > 0:
+                opponent_state = create_game_state(
+                    board, opponent_rack, [], opponent_score, agent_score,
+                    len(tile_bag), rounds_played
+                )
+                opponent_moves = self.move_generator.get_valid_moves(board, opponent_rack)
+                
+                if opponent_moves:
+                    opponent_move = opponent.choose_move(opponent_state, opponent_moves, training=False)
+                    if opponent_move:
+                        board = place_word_on_board(board, opponent_move['word'], opponent_move['positions'])
+                        opponent_score += opponent_move['score']
+                        
+                        opponent_tiles_drawn = draw_tiles(tile_bag, len(opponent_move['tiles_used']))
+                        opponent_rack = get_rack_after_move(opponent_rack, opponent_move['tiles_used'], opponent_tiles_drawn)
+            
+            rounds_played += 1
+            
+            # Break if no valid moves for both players
+            if not valid_moves and not opponent_moves:
+                break
+        
+        return {
+            'agent_score': agent_score,
+            'opponent_score': opponent_score,
+            'rounds_played': rounds_played,
+            'final_score_gap': agent_score - opponent_score,
+            'agent_won': agent_score > opponent_score
+        }
+    
+    def plot_evaluation_results(self, results: Dict, save_plot: bool = True) -> str:
+        """
+        Generate comprehensive evaluation plots
+        
+        Args:
+            results: Results dictionary from evaluate_vs_greedy
+            save_plot: Whether to save the plot to file
+            
+        Returns:
+            Path to saved plot file if save_plot=True, empty string otherwise
+        """
+        if not results.get('detailed_results'):
+            print("❌ No detailed results available for plotting")
+            return ""
+        
+        # Ensure plot directory exists
+        os.makedirs('plot', exist_ok=True)
+        
+        # Extract data
+        games = results['detailed_results']
+        game_numbers = [g['game_number'] for g in games]
+        agent_scores = [g['agent_score'] for g in games]
+        greedy_scores = [g['opponent_score'] for g in games]
+        score_gaps = [g['score_gap'] for g in games]
+        wins = [g['agent_won'] for g in games]
+        
+        # Create comprehensive plot
+        plt.figure(figsize=(20, 12))
+        
+        # Plot 1: Score Evolution Over Games
+        plt.subplot(2, 3, 1)
+        plt.plot(game_numbers, agent_scores, alpha=0.7, label='RL Agent', color='blue', linewidth=1)
+        plt.plot(game_numbers, greedy_scores, alpha=0.7, label='Greedy Opponent', color='red', linewidth=1)
+        
+        # Add moving averages
+        window = max(10, len(game_numbers) // 20)
+        if len(game_numbers) >= window:
+            agent_ma = moving_average(agent_scores, window)
+            greedy_ma = moving_average(greedy_scores, window)
+            plt.plot(game_numbers[window-1:], agent_ma, '--', linewidth=3, 
+                    color='darkblue', label=f'Agent MA({window})')
+            plt.plot(game_numbers[window-1:], greedy_ma, '--', linewidth=3, 
+                    color='darkred', label=f'Greedy MA({window})')
+        
+        plt.axhline(y=results['avg_score'], color='blue', linestyle=':', alpha=0.8,
+                   label=f"Agent Avg: {results['avg_score']:.1f}")
+        plt.axhline(y=results['avg_opponent_score'], color='red', linestyle=':', alpha=0.8,
+                   label=f"Greedy Avg: {results['avg_opponent_score']:.1f}")
+        
+        plt.xlabel('Game Number')
+        plt.ylabel('Score')
+        plt.title('Score Evolution: RL Agent vs Greedy Opponent')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Plot 2: Score Gap Over Games
+        plt.subplot(2, 3, 2)
+        colors = ['green' if gap >= 0 else 'red' for gap in score_gaps]
+        plt.scatter(game_numbers, score_gaps, c=colors, alpha=0.6, s=15)
+        plt.axhline(y=0, color='black', linestyle='-', alpha=0.8)
+        plt.axhline(y=results['avg_score_gap'], color='purple', linestyle='--', linewidth=2,
+                   label=f"Avg Gap: {results['avg_score_gap']:+.1f}")
+        
+        # Add moving average for score gap
+        if len(game_numbers) >= window:
+            gap_ma = moving_average(score_gaps, window)
+            plt.plot(game_numbers[window-1:], gap_ma, '--', linewidth=3, 
+                    color='purple', alpha=0.8, label=f'Gap MA({window})')
+        
+        plt.xlabel('Game Number')
+        plt.ylabel('Score Gap (Agent - Greedy)')
+        plt.title('Score Gap Evolution')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Plot 3: Score Distribution Comparison
+        plt.subplot(2, 3, 3)
+        plt.hist(agent_scores, bins=30, alpha=0.7, label='RL Agent', color='blue', density=True)
+        plt.hist(greedy_scores, bins=30, alpha=0.7, label='Greedy Opponent', color='red', density=True)
+        plt.axvline(np.mean(agent_scores), color='darkblue', linestyle='--', linewidth=2,
+                   label=f'Agent Mean: {np.mean(agent_scores):.1f}')
+        plt.axvline(np.mean(greedy_scores), color='darkred', linestyle='--', linewidth=2,
+                   label=f'Greedy Mean: {np.mean(greedy_scores):.1f}')
+        
+        plt.xlabel('Score')
+        plt.ylabel('Density')
+        plt.title('Score Distribution Comparison')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Plot 4: Cumulative Win Rate
+        plt.subplot(2, 3, 4)
+        cumulative_wins = np.cumsum(wins)
+        cumulative_win_rate = cumulative_wins / np.arange(1, len(wins) + 1) * 100
+        
+        plt.plot(game_numbers, cumulative_win_rate, linewidth=2, color='darkgreen')
+        plt.axhline(y=50, color='black', linestyle='--', alpha=0.5, label='50% (Even)')
+        plt.axhline(y=results['win_rate'] * 100, color='green', linestyle=':', linewidth=2,
+                   label=f"Final: {results['win_rate']:.1%}")
+        
+        plt.fill_between(game_numbers, cumulative_win_rate, 50, 
+                        where=(cumulative_win_rate >= 50), 
+                        color='green', alpha=0.3, label='Above 50%')
+        plt.fill_between(game_numbers, cumulative_win_rate, 50, 
+                        where=(cumulative_win_rate < 50), 
+                        color='red', alpha=0.3, label='Below 50%')
+        
+        plt.xlabel('Game Number')
+        plt.ylabel('Cumulative Win Rate (%)')
+        plt.title('Cumulative Win Rate Evolution')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.ylim(0, 100)
+        
+        # Plot 5: Performance Consistency
+        plt.subplot(2, 3, 5)
+        
+        # Calculate rolling win rate
+        rolling_window = min(20, len(wins) // 5)
+        if rolling_window >= 5:
+            rolling_wins = []
+            for i in range(rolling_window - 1, len(wins)):
+                window_wins = sum(wins[i - rolling_window + 1:i + 1])
+                rolling_win_rate = window_wins / rolling_window * 100
+                rolling_wins.append(rolling_win_rate)
+            
+            rolling_games = game_numbers[rolling_window - 1:]
+            plt.plot(rolling_games, rolling_wins, linewidth=2, color='orange', 
+                    label=f'Rolling Win Rate ({rolling_window} games)')
+            plt.axhline(y=50, color='black', linestyle='--', alpha=0.5, label='50%')
+            
+            plt.xlabel('Game Number')
+            plt.ylabel('Rolling Win Rate (%)')
+            plt.title(f'Performance Consistency (Rolling {rolling_window}-Game Window)')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.ylim(0, 100)
+        else:
+            plt.text(0.5, 0.5, 'Not enough games\nfor consistency analysis', 
+                    ha='center', va='center', transform=plt.gca().transAxes, fontsize=12)
+            plt.title('Performance Consistency')
+        
+        # Plot 6: Summary Statistics
+        plt.subplot(2, 3, 6)
+        plt.axis('off')
+        
+        # Create summary text
+        summary_text = f"""
+EVALUATION SUMMARY
+{'='*25}
 
+Games Played: {results['games_played']:,}
+Win Rate: {results['win_rate']:.1%}
+
+SCORES
+Agent Avg: {results['avg_score']:.1f}
+Greedy Avg: {results['avg_opponent_score']:.1f}
+Score Gap: {results['avg_score_gap']:+.1f}
+
+PERFORMANCE
+Agent Std: {results.get('score_std', 0):.1f}
+Biggest Win: +{max(score_gaps):.0f}
+Biggest Loss: {min(score_gaps):+.0f}
+
+CONSISTENCY
+Best 20%: {np.percentile(agent_scores, 80):.0f}
+Worst 20%: {np.percentile(agent_scores, 20):.0f}
+
+Evaluation Time: {results.get('total_evaluation_time', 0)/60:.1f} min
+Avg Game Time: {results.get('avg_game_time', 0):.1f}s
+"""
+        
+        plt.text(0.1, 0.9, summary_text, transform=plt.gca().transAxes, 
+                fontsize=10, verticalalignment='top', fontfamily='monospace',
+                bbox=dict(boxstyle="round,pad=0.5", facecolor="lightgray", alpha=0.8))
+        
+        plt.tight_layout()
+        
+        if save_plot:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            plot_path = f'plot/evaluation_results_{timestamp}.png'
+            plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+            plt.close()
+            
+            print(f"📊 Evaluation plots saved: {plot_path}")
+            return plot_path
+        else:
+            plt.show()
+            return ""
+            
 if __name__ == "__main__":
     main_with_self_play()

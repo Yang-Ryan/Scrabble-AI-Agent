@@ -49,6 +49,8 @@ python3 main.py play
 (scrabble-env) $ python3 main.py self-play --episodes 2000 --greedy-eval-games 3 --save-model
 (scrabble-env) $ python3 main.py train --episodes 500 --save-model
 
+python3 main.py evaluate 100 --model-path self_play_model_20250601_222832_ep2000.json --plot
+
 ```
 
 ---
