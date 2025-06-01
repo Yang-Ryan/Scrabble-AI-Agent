@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>gcg</string>
+			</array>
+			<key>CFBundleTypeName</key>
+			<string>Quackle Game File</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+		</dict>
+	</array>
+	<key>CFBundleExecutable</key>
+	<string>Quackle</string>
+	<key>CFBundleIconFile</key>
+	<string>quacker.icns</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.quackle.quackle</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleName</key>
+	<string>Quackle</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.4.1</string>
+	<key>CFBundleVersion</key>
+	<string>1.0.4.1</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.word-games</string>
+	<key>NSPrincipalClass</key>
+	<string>NSApplication</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>Copyright © 2005-2019 by Jason Katz-Brown, John O'Laughlin &amp; John Fultz</string>
+</dict>
+</plist>
