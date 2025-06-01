@@ -296,14 +296,43 @@ class SelfPlayTrainer:
         }
 
     def _train_vs_greedy(self, agent: AdaptiveScrabbleQLearner, num_episodes: int,
-                     evaluation_interval: int = 100, save_interval: int = 500, verbose: bool = True) -> AdaptiveScrabbleQLearner:
+                 evaluation_interval: int = 100, save_interval: int = 500, verbose: bool = True) -> AdaptiveScrabbleQLearner:
         """
-        Train the agent against a GreedyAgent opponent.
+        Train the agent against a GreedyAgent opponent with comprehensive tracking.
         """
         greedy_opponent = GreedyAgent()
-        self.training_logs = []
+        
+        # Enhanced training statistics matching self-play format
+        self.training_stats = {
+            'episodes_completed': 0,
+            'total_training_time': 0,
+            'training_mode': 'vs_greedy',
+            
+            # Agent vs Greedy training stats (equivalent to self-play format)
+            'agent_scores': [],           # Agent scores (equivalent to self_play_scores_p1)
+            'greedy_scores': [],          # Greedy opponent scores (equivalent to self_play_scores_p2)
+            'score_gaps': [],             # Agent - Greedy score gaps
+            'wins': [],                   # Whether agent won each game
+            
+            # Evaluation stats (periodic assessment)
+            'eval_episodes': [],          # Which episodes had evaluation
+            'eval_results': [],           # Detailed evaluation results
+            'eval_win_rates': [],         # Win rate over evaluation intervals
+            'eval_avg_scores': [],        # Average score over evaluation intervals
+            'eval_score_gaps': [],        # Score gaps over evaluation intervals
+            
+            # Technical stats
+            'td_errors': [],
+            'weight_evolution': [],
+            'network_analysis': [],
+            'buffer_statistics': []
+        }
+        
+        start_time = time.time()
 
         for episode in range(1, num_episodes + 1):
+            episode_start_time = time.time()
+            
             board = create_empty_board()
             tile_bag = create_tile_bag()
             
@@ -375,48 +404,336 @@ class SelfPlayTrainer:
                 if not valid_moves and not opponent_moves:
                     break
 
+            # Train agent from the game experience
             if agent_experiences:
                 # Mark last move as terminal
                 agent_experiences[-1]['terminal'] = True
-
-                # Train after the game
                 agent.train_on_episode(agent_experiences)
+                
+                # Track TD error
+                td_error = agent.get_last_td_error()
+                self.training_stats['td_errors'].append(td_error)
             
-            self.training_logs.append({
-                'episode': episode,
-                'agent_score': agent_score,
-                'opponent_score': opponent_score,
-                'final_score_gap': agent_score - opponent_score,
-                'agent_won': agent_score > opponent_score
-            })
+            # Store game results
+            agent_won = agent_score > opponent_score
+            final_score_gap = agent_score - opponent_score
+            
+            self.training_stats['agent_scores'].append(agent_score)
+            self.training_stats['greedy_scores'].append(opponent_score)
+            self.training_stats['score_gaps'].append(final_score_gap)
+            self.training_stats['wins'].append(agent_won)
+            self.training_stats['episodes_completed'] += 1
+            
+            episode_time = time.time() - episode_start_time
 
+            # Periodic evaluation and progress reporting
             if evaluation_interval > 0 and episode % evaluation_interval == 0:
-                wins = sum(1 for log in self.training_logs[-evaluation_interval:] if log['agent_won'])
-                avg_score = sum(log['agent_score'] for log in self.training_logs[-evaluation_interval:]) / evaluation_interval
-                avg_gap = sum(log['final_score_gap'] for log in self.training_logs[-evaluation_interval:]) / evaluation_interval
+                eval_start_time = time.time()
+                
+                recent_games = evaluation_interval
+                recent_wins = sum(self.training_stats['wins'][-recent_games:])
+                recent_avg_score = np.mean(self.training_stats['agent_scores'][-recent_games:])
+                recent_avg_gap = np.mean(self.training_stats['score_gaps'][-recent_games:])
+                win_rate = recent_wins / recent_games
+                
+                # Store evaluation results
+                eval_result = {
+                    'episode': episode,
+                    'win_rate': win_rate,
+                    'avg_score': recent_avg_score,
+                    'avg_score_gap': recent_avg_gap,
+                    'epsilon': agent.epsilon,
+                    'buffer_size': agent.experience_buffer.size()
+                }
+                
+                self.training_stats['eval_episodes'].append(episode)
+                self.training_stats['eval_results'].append(eval_result)
+                self.training_stats['eval_win_rates'].append(win_rate)
+                self.training_stats['eval_avg_scores'].append(recent_avg_score)
+                self.training_stats['eval_score_gaps'].append(recent_avg_gap)
+                
+                # Network analysis
+                network_analysis = agent.analyze_networks()
+                self.training_stats['network_analysis'].append({
+                    'episode': episode,
+                    **network_analysis
+                })
+                
+                # Buffer statistics
+                buffer_stats = {
+                    'episode': episode,
+                    'buffer_size': agent.experience_buffer.size(),
+                    'buffer_utilization': agent.experience_buffer.size() / agent.experience_buffer.max_size,
+                    'total_updates': agent.total_updates,
+                    'target_updates': agent.target_updates
+                }
+                self.training_stats['buffer_statistics'].append(buffer_stats)
+                
+                eval_time = time.time() - eval_start_time
 
                 if verbose:
-                    print(f"[Episode {episode}] Win Rate: {wins / evaluation_interval:.1%}, "
-                        f"Avg Score: {avg_score:.1f}, Avg Gap: {avg_gap:+.1f}")
+                    print(f"[Episode {episode:4d}] "
+                        f"vs Greedy - WR: {win_rate:5.1%} | "
+                        f"Score: {recent_avg_score:5.1f} | "
+                        f"Gap: {recent_avg_gap:+5.1f} | "
+                        f"ε: {agent.epsilon:.3f} | "
+                        f"Buffer: {agent.experience_buffer.size():4d} | "
+                        f"Time: {format_time(episode_time + eval_time)}")
 
+            # Save checkpoints
             if save_interval > 0 and episode % save_interval == 0:
-                checkpoint_path = f"checkpoint_episode_{episode}.json"
+                checkpoint_path = f"greedy_checkpoint_ep{episode}.json"
                 agent.save_model(checkpoint_path)
                 if verbose:
-                    print(f"Model checkpoint saved: {checkpoint_path}")
+                    print(f"    Checkpoint saved: {checkpoint_path}")
         
-        final_wins = sum(1 for log in self.training_logs if log['agent_won'])
-        games_played = len(self.training_logs)
+        # Generate plots after training
+        self.plot_greedy_training_progress()
+        
+        total_time = time.time() - start_time
+        self.training_stats['total_training_time'] = total_time
+        
+        if verbose:
+            self._print_final_greedy_summary()
+        
+        # Prepare final performance summary for compatibility
+        final_wins = sum(self.training_stats['wins'])
+        games_played = len(self.training_stats['wins'])
         self.training_summary = {
             'final_performance': {
                 'win_rate': final_wins / games_played if games_played > 0 else 0,
-                'avg_score': sum(log['agent_score'] for log in self.training_logs) / games_played if games_played > 0 else 0,
-                'avg_score_gap': sum(log['final_score_gap'] for log in self.training_logs) / games_played if games_played > 0 else 0
+                'avg_score': np.mean(self.training_stats['agent_scores']) if games_played > 0 else 0,
+                'avg_score_gap': np.mean(self.training_stats['score_gaps']) if games_played > 0 else 0
             }
         }
         
         return agent
 
+    def plot_greedy_training_progress(self):
+        """Generate comprehensive greedy training plots (same 9 plots as self-play)"""
+        
+        if not self.training_stats['agent_scores']:
+            print("No training data to plot")
+            return
+        
+        plt.figure(figsize=(20, 15))
+        
+        episodes = np.arange(1, len(self.training_stats['agent_scores']) + 1)
+        
+        # Plot 1: Score Evolution (Agent vs Greedy)
+        plt.subplot(3, 3, 1)
+        agent_scores = self.training_stats['agent_scores']
+        greedy_scores = self.training_stats['greedy_scores']
+        
+        plt.plot(episodes, agent_scores, alpha=0.6, label='RL Agent', color='blue')
+        plt.plot(episodes, greedy_scores, alpha=0.6, label='Greedy Opponent', color='red')
+        
+        # Moving averages
+        window = max(1, len(episodes) // 20)
+        if len(episodes) >= window:
+            agent_ma = np.convolve(agent_scores, np.ones(window)/window, mode='valid')
+            greedy_ma = np.convolve(greedy_scores, np.ones(window)/window, mode='valid')
+            plt.plot(episodes[window-1:], agent_ma, label='Agent MA', linestyle='--', color='darkblue')
+            plt.plot(episodes[window-1:], greedy_ma, label='Greedy MA', linestyle='--', color='darkred')
+        
+        plt.xlabel('Episode')
+        plt.ylabel('Score')
+        plt.title('Score Evolution: RL Agent vs Greedy')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Plot 2: Score Gaps
+        plt.subplot(3, 3, 2)
+        score_gaps = self.training_stats['score_gaps']
+        plt.plot(episodes, score_gaps, alpha=0.6, color='purple')
+        plt.axhline(y=0, color='black', linestyle='-', alpha=0.5)
+        plt.fill_between(episodes, score_gaps, 0, where=(np.array(score_gaps) >= 0), 
+                        color='green', alpha=0.3, label='Agent Wins')
+        plt.fill_between(episodes, score_gaps, 0, where=(np.array(score_gaps) < 0), 
+                        color='red', alpha=0.3, label='Greedy Wins')
+        plt.xlabel('Episode')
+        plt.ylabel('Score Gap (Agent - Greedy)')
+        plt.title('Score Gap Evolution')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Plot 3: Win Rate Over Time
+        plt.subplot(3, 3, 3)
+        if self.training_stats['eval_episodes']:
+            eval_episodes = self.training_stats['eval_episodes']
+            win_rates = [wr * 100 for wr in self.training_stats['eval_win_rates']]
+            
+            plt.scatter(eval_episodes, win_rates, s=10, color='lightgreen', label='Raw Win Rate')
+            smoothed_win_rate = moving_average(win_rates, window_size=min(10, len(win_rates)))
+            if len(smoothed_win_rate) > 0:
+                plt.plot(eval_episodes[:len(smoothed_win_rate)], smoothed_win_rate, 
+                        linewidth=2.5, color='green', label='Smoothed Win Rate')
+            plt.axhline(y=50, color='black', linestyle='--', alpha=0.5, label='50% (Even)')
+            
+            plt.xlabel('Episode')
+            plt.ylabel('Win Rate vs Greedy (%)')
+            plt.title('Performance vs Greedy Over Training')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.ylim(0, 100)
+
+        # Plot 4: Score vs Greedy Over Time  
+        plt.subplot(3, 3, 4)
+        if self.training_stats['eval_episodes']:
+            eval_episodes = self.training_stats['eval_episodes']
+            agent_scores_eval = self.training_stats['eval_avg_scores']
+            
+            plt.scatter(eval_episodes, agent_scores_eval, s=10, color='lightblue', label='Raw Scores')
+            smoothed_scores = moving_average(agent_scores_eval, window_size=min(10, len(agent_scores_eval)))
+            if len(smoothed_scores) > 0:
+                plt.plot(eval_episodes[:len(smoothed_scores)], smoothed_scores, 
+                        linewidth=2.5, color='blue', label='Smoothed Score')
+            
+            plt.xlabel('Episode')
+            plt.ylabel('Average Score vs Greedy')
+            plt.title('Score Performance vs Greedy')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+
+        # Plot 5: Score Gap vs Greedy Over Time
+        plt.subplot(3, 3, 5)
+        if self.training_stats['eval_score_gaps']:
+            eval_episodes = self.training_stats['eval_episodes']
+            score_gaps_eval = self.training_stats['eval_score_gaps']
+            
+            plt.scatter(eval_episodes, score_gaps_eval, s=10, color='navajowhite', label='Raw Score Gap')
+            smoothed_gaps = moving_average(score_gaps_eval, window_size=min(10, len(score_gaps_eval)))
+            if len(smoothed_gaps) > 0:
+                plt.plot(eval_episodes[:len(smoothed_gaps)], smoothed_gaps, 
+                        linewidth=2.5, color='orange', label='Smoothed Score Gap')
+            plt.axhline(y=0, color='black', linestyle='-', alpha=0.5)
+            
+            plt.xlabel('Episode')
+            plt.ylabel('Score Gap vs Greedy')
+            plt.title('Score Gap vs Greedy Over Training')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+        
+        # Plot 6: Score Distribution Comparison
+        plt.subplot(3, 3, 6)
+        plt.hist(agent_scores, bins=30, alpha=0.7, label='RL Agent', color='blue', density=True)
+        plt.hist(greedy_scores, bins=30, alpha=0.7, label='Greedy Opponent', color='red', density=True)
+        plt.axvline(np.mean(agent_scores), color='darkblue', linestyle='--', 
+                label=f'Agent Avg: {np.mean(agent_scores):.1f}')
+        plt.axvline(np.mean(greedy_scores), color='darkred', linestyle='--', 
+                label=f'Greedy Avg: {np.mean(greedy_scores):.1f}')
+        plt.xlabel('Score')
+        plt.ylabel('Density')
+        plt.title('Score Distribution Comparison')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Plot 7: TD Error Evolution
+        plt.subplot(3, 3, 7)
+        if self.training_stats['td_errors']:
+            td_errors = self.training_stats['td_errors']
+            td_episodes = np.arange(1, len(td_errors) + 1)
+            
+            plt.plot(td_episodes, td_errors, alpha=0.7, color='orange')
+            if len(td_errors) > 10:
+                td_window = max(1, len(td_errors) // 20)
+                td_ma = np.convolve(td_errors, np.ones(td_window)/td_window, mode='valid')
+                plt.plot(td_episodes[td_window-1:], td_ma, linestyle='--', linewidth=2, color='darkorange')
+            
+            plt.xlabel('Episode')
+            plt.ylabel('TD Error')
+            plt.title('TD Error Evolution')
+            plt.grid(True, alpha=0.3)
+
+        # Plot 8: Network Analysis
+        plt.subplot(3, 3, 8)
+        if self.training_stats['network_analysis']:
+            net_episodes = [entry['episode'] for entry in self.training_stats['network_analysis']]
+            weight_diffs = [entry['weight_difference_norm'] for entry in self.training_stats['network_analysis']]
+            
+            plt.plot(net_episodes, weight_diffs, marker='^', linewidth=2, 
+                    markersize=4, color='purple', label='Main-Target Weight Diff')
+            plt.xlabel('Episode')
+            plt.ylabel('Weight Difference Norm')
+            plt.title('Network Divergence')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+        
+        # Plot 9: Buffer Utilization
+        plt.subplot(3, 3, 9)
+        if self.training_stats['buffer_statistics']:
+            buf_episodes = [entry['episode'] for entry in self.training_stats['buffer_statistics']]
+            buf_utilization = [entry['buffer_utilization'] * 100 for entry in self.training_stats['buffer_statistics']]
+            
+            plt.plot(buf_episodes, buf_utilization, marker='x', linewidth=2, 
+                    markersize=4, color='brown', label='Buffer Utilization')
+            plt.xlabel('Episode')
+            plt.ylabel('Buffer Utilization (%)')
+            plt.title('Experience Replay Buffer Usage')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.ylim(0, 105)
+        
+        plt.tight_layout()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        plt.savefig(f'plot/greedy_training_{timestamp}.png', dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        print(f"Greedy training plots saved: plot/greedy_training_{timestamp}.png")
+
+    def _print_final_greedy_summary(self):
+        """Print comprehensive final summary for greedy training"""
+        print(f"\n" + "="*70)
+        print(f"🎯 GREEDY TRAINING COMPLETED")
+        print(f"="*70)
+        
+        episodes = len(self.training_stats['agent_scores'])
+        total_wins = sum(self.training_stats['wins'])
+        win_rate = total_wins / episodes if episodes > 0 else 0
+        
+        agent_avg = np.mean(self.training_stats['agent_scores'])
+        greedy_avg = np.mean(self.training_stats['greedy_scores'])
+        avg_gap = np.mean(self.training_stats['score_gaps'])
+        
+        print(f"Total Episodes: {episodes}")
+        print(f"Overall Win Rate vs Greedy: {win_rate:.1%}")
+        print(f"Agent Average Score: {agent_avg:.1f}")
+        print(f"Greedy Average Score: {greedy_avg:.1f}")
+        print(f"Average Score Gap: {avg_gap:+.1f}")
+        
+        # Performance assessment
+        if win_rate > 0.7:
+            print("🚀 EXCELLENT - Agent dominates greedy opponent!")
+        elif win_rate > 0.6:
+            print("✅ GOOD - Agent consistently beats greedy")
+        elif win_rate > 0.5:
+            print("📊 FAIR - Agent is competitive with greedy")
+        elif win_rate > 0.4:
+            print("⚠️ BELOW AVERAGE - Agent struggles against greedy")
+        else:
+            print("❌ POOR - Agent loses consistently to greedy")
+        
+        # Learning progression
+        if len(self.training_stats['eval_win_rates']) >= 2:
+            early_wr = self.training_stats['eval_win_rates'][0]
+            final_wr = self.training_stats['eval_win_rates'][-1]
+            improvement = final_wr - early_wr
+            
+            print(f"\nLearning Progress:")
+            print(f"Early Win Rate: {early_wr:.1%}")
+            print(f"Final Win Rate: {final_wr:.1%}")
+            print(f"Improvement: {improvement:+.1%}")
+            
+            if improvement > 0.15:
+                print("📈 Strong learning curve!")
+            elif improvement > 0.05:
+                print("📈 Good improvement shown")
+            elif improvement > 0:
+                print("📊 Modest improvement")
+            else:
+                print("📉 No clear improvement - may need more episodes")
+        
+        print(f"="*70)
 
     def _evaluate_vs_greedy(self, agent: AdaptiveScrabbleQLearner, 
                         greedy_opponent: GreedyAgent, num_games: int) -> Dict:
@@ -763,111 +1080,102 @@ class SelfPlayTrainer:
         print(f"="*70)
 
     def get_training_summary(self) -> Dict:
-        """Get comprehensive training summary"""
-        return {
-            'training_stats': self.training_stats,
-            'training_mode': 'self_play',
-            'episodes_completed': self.training_stats['episodes_completed'],
-            'total_training_time': self.training_stats['total_training_time']
-        }
-
-    def save_training_data(self, filepath: str):
-        """Save self-play training statistics"""
-        training_data = {
-            'training_stats': self.training_stats,
-            'timestamp': datetime.now().isoformat(),
-            'training_mode': 'self_play',
-            'version': '1.0_self_play_with_greedy_eval'
-        }
-        save_game_data(training_data, filepath)
-
-
-# Enhanced main.py functions for self-play
-def train_self_play_agent(args):
-    """Train agent using self-play with greedy evaluation"""
-    print("🤖 SELF-PLAY TRAINING MODE")
-    print("=" * 50)
-    print(f"Episodes: {args.episodes} (RL vs RL)")
-    print(f"Greedy Evaluation: Every {args.greedy_eval_interval} episode(s)")
-    print(f"Games per Evaluation: {args.greedy_eval_games}")
-    print(f"Learning Rate: {args.learning_rate}")
-    print(f"Dictionary: {args.dictionary}")
-    print()
-    
-    # Create agent
-    agent = AdaptiveScrabbleQLearner(
-        num_features=8,
-        learning_rate=args.learning_rate,
-        epsilon=args.epsilon,
-        gamma=args.gamma,
-        buffer_size=args.buffer_size,
-        batch_size=32,
-        target_update_frequency=100
-    )
-    
-    # Create self-play trainer
-    trainer = SelfPlayTrainer(args.dictionary)
-    
-    # Train with self-play
-    trained_agent = trainer.train_self_play(
-        agent=agent,
-        num_episodes=args.episodes,
-        greedy_eval_interval=args.greedy_eval_interval,
-        greedy_eval_games=args.greedy_eval_games,
-        verbose=True
-    )
-    
-    # Save trained model
-    if args.save_model:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        model_path = f"self_play_model_{timestamp}_ep{args.episodes}.json"
-        trained_agent.save_model(model_path)
-        print(f"\nTrained model saved: {model_path}")
+        """Get comprehensive training summary for any training mode"""
         
-        # Save training data
-        training_data_path = f"self_play_data_{timestamp}.json"
-        trainer.save_training_data(training_data_path)
-        print(f"Training data saved: {training_data_path}")
-    
-    return trained_agent
+        # Handle different training modes
+        if hasattr(self, 'training_stats'):
+            training_mode = self.training_stats.get('training_mode', '')
+            
+            if training_mode == 'self_play':
+                # Self-play training summary
+                episodes = len(self.training_stats.get('self_play_scores_p1', []))
+                if episodes > 0:
+                    final_performance = {
+                        'win_rate': sum(1 for w in self.training_stats.get('self_play_wins', []) if w == 1) / episodes,
+                        'avg_score': np.mean(self.training_stats['self_play_scores_p1']),
+                        'avg_score_gap': np.mean(self.training_stats['self_play_score_gaps'])
+                    }
+                    return {
+                        'final_performance': final_performance,
+                        'training_mode': 'self_play',
+                        'episodes_completed': episodes,
+                        'total_training_time': self.training_stats.get('total_training_time', 0)
+                    }
+            
+            elif training_mode == 'vs_greedy':
+                # Greedy training summary  
+                episodes = len(self.training_stats.get('agent_scores', []))
+                if episodes > 0:
+                    final_performance = {
+                        'win_rate': sum(self.training_stats.get('wins', [])) / episodes,
+                        'avg_score': np.mean(self.training_stats['agent_scores']),
+                        'avg_score_gap': np.mean(self.training_stats['score_gaps'])
+                    }
+                    return {
+                        'final_performance': final_performance,
+                        'training_mode': 'vs_greedy',
+                        'episodes_completed': episodes,
+                        'total_training_time': self.training_stats.get('total_training_time', 0)
+                    }
+            
+            elif training_mode == 'vs_quackle':
+                # Quackle training summary (if you have QuackleTrainer integrated)
+                episodes = len(self.training_stats.get('agent_scores', []))
+                if episodes > 0:
+                    final_performance = {
+                        'win_rate': sum(self.training_stats.get('wins', [])) / episodes,
+                        'avg_score': np.mean(self.training_stats['agent_scores']),
+                        'avg_score_gap': np.mean(self.training_stats['score_gaps'])
+                    }
+                    return {
+                        'final_performance': final_performance,
+                        'training_mode': 'vs_quackle',
+                        'episodes_completed': episodes,
+                        'total_training_time': self.training_stats.get('total_training_time', 0)
+                    }
+        
+        # Fallback to legacy training_logs for backward compatibility
+        if hasattr(self, 'training_logs') and self.training_logs:
+            final_wins = sum(1 for log in self.training_logs if log['agent_won'])
+            games_played = len(self.training_logs)
+            return {
+                'final_performance': {
+                    'win_rate': final_wins / games_played if games_played > 0 else 0,
+                    'avg_score': sum(log['agent_score'] for log in self.training_logs) / games_played if games_played > 0 else 0,
+                    'avg_score_gap': sum(log['final_score_gap'] for log in self.training_logs) / games_played if games_played > 0 else 0
+                },
+                'training_mode': 'legacy_vs_greedy',
+                'episodes_completed': games_played,
+                'total_training_time': 0
+            }
+        
+        return {'final_performance': None}
 
-
-def main_with_self_play():
-    """Enhanced main function with self-play support"""
-    import argparse
     
-    parser = argparse.ArgumentParser(description='Scrabble RL Agent with Self-Play Training')
-    subparsers = parser.add_subparsers(dest='command', help='Available commands')
-    
-    # Self-play training command
-    self_play_parser = subparsers.add_parser('self-play', help='Train agent using self-play')
-    self_play_parser.add_argument('--episodes', type=int, default=2000,
-                                 help='Number of self-play episodes (default: 2000)')
-    self_play_parser.add_argument('--learning-rate', type=float, default=0.01,
-                                 help='Learning rate (default: 0.01)')
-    self_play_parser.add_argument('--epsilon', type=float, default=0.3,
-                                 help='Initial exploration rate (default: 0.3)')
-    self_play_parser.add_argument('--gamma', type=float, default=0.9,
-                                 help='Discount factor (default: 0.9)')
-    self_play_parser.add_argument('--buffer-size', type=int, default=5000,
-                                 help='Experience replay buffer size (default: 5000)')
-    self_play_parser.add_argument('--greedy-eval-interval', type=int, default=1,
-                                 help='Evaluate vs greedy every N episodes (default: 1)')
-    self_play_parser.add_argument('--greedy-eval-games', type=int, default=3,
-                                 help='Games vs greedy per evaluation (default: 3)')
-    self_play_parser.add_argument('--save-model', action='store_true',
-                                 help='Save trained model')
-    self_play_parser.add_argument('--dictionary', default='dictionary.txt',
-                                 help='Dictionary file path')
-    
-    args = parser.parse_args()
-    
-    if not args.command:
-        parser.print_help()
-        return
-    
-    if args.command == 'self-play':
-        train_self_play_agent(args)
+    def save_training_data(self, filepath: str):
+        """Save training statistics for any training mode"""
+        
+        # Determine training mode
+        training_mode = 'unknown'
+        if hasattr(self, 'training_stats') and 'training_mode' in self.training_stats:
+            training_mode = self.training_stats['training_mode']
+        elif hasattr(self, 'training_logs'):
+            training_mode = 'legacy_vs_greedy'
+        
+        training_data = {
+            'timestamp': datetime.now().isoformat(),
+            'training_mode': training_mode,
+            'version': f'1.0_{training_mode}_enhanced_plots'
+        }
+        
+        # Add appropriate data based on training mode
+        if hasattr(self, 'training_stats'):
+            training_data['training_stats'] = self.training_stats
+        elif hasattr(self, 'training_logs'):
+            training_data['training_logs'] = self.training_logs
+        
+        save_game_data(training_data, filepath)
+        print(f"Training data saved: {filepath} (mode: {training_mode})")
 
 
 if __name__ == "__main__":
