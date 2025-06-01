@@ -9,6 +9,7 @@ import random
 import json
 from typing import List, Dict, Tuple, Any, Optional
 from collections import deque, defaultdict
+from quackle_agent import QuackleAgent as qa
 
 class ExperienceBuffer:
     """
@@ -1132,6 +1133,21 @@ class GreedyAgent:
         if not valid_moves:
             return None
         return max(valid_moves, key=lambda move: move.get('score', 0))
+
+class QuackleAgent: 
+    """Quackle Agent"""
+
+    def __init__(self) :
+        self.name = "Quackle"
+        self.agent = qa()
+
+
+    def choose_move(self, : state: Dict, valid_moves: List[Dict], 
+                   training: bool = True, gcg_abs_path: str):
+        if not valid_moves : return None
+        move = self.agent.choose_move(state, valid_moves, training, gcg_abs_path)
+        return move
+
 
 def main():
     """Test the adaptive agent"""
