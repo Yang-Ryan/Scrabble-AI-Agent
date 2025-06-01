@@ -12,8 +12,7 @@ from typing import List, Dict, Tuple, Optional
 from datetime import datetime
 import copy
 
-from scrabble_agent import GreedyAgent
-from scrabble_agent import AdaptiveScrabbleQLearner
+from scrabble_agent import GreedyAgent, AdaptiveScrabbleQLearner, QuackleAgent
 from move_generator import MoveGenerator
 from utils import (create_empty_board, create_tile_bag, draw_tiles, 
                   place_word_on_board, get_rack_after_move, create_game_state,
@@ -781,94 +780,494 @@ class SelfPlayTrainer:
         }
         save_game_data(training_data, filepath)
 
-
-# Enhanced main.py functions for self-play
-def train_self_play_agent(args):
-    """Train agent using self-play with greedy evaluation"""
-    print("🤖 SELF-PLAY TRAINING MODE")
-    print("=" * 50)
-    print(f"Episodes: {args.episodes} (RL vs RL)")
-    print(f"Greedy Evaluation: Every {args.greedy_eval_interval} episode(s)")
-    print(f"Games per Evaluation: {args.greedy_eval_games}")
-    print(f"Learning Rate: {args.learning_rate}")
-    print(f"Dictionary: {args.dictionary}")
-    print()
+class QuackleTrainer:
+    """
+    Trainer class specifically for training RL agents against Quackle opponents
+    """
     
-    # Create agent
-    agent = AdaptiveScrabbleQLearner(
-        num_features=8,
-        learning_rate=args.learning_rate,
-        epsilon=args.epsilon,
-        gamma=args.gamma,
-        buffer_size=args.buffer_size,
-        batch_size=32,
-        target_update_frequency=100
-    )
-    
-    # Create self-play trainer
-    trainer = SelfPlayTrainer(args.dictionary)
-    
-    # Train with self-play
-    trained_agent = trainer.train_self_play(
-        agent=agent,
-        num_episodes=args.episodes,
-        greedy_eval_interval=args.greedy_eval_interval,
-        greedy_eval_games=args.greedy_eval_games,
-        verbose=True
-    )
-    
-    # Save trained model
-    if args.save_model:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        model_path = f"self_play_model_{timestamp}_ep{args.episodes}.json"
-        trained_agent.save_model(model_path)
-        print(f"\nTrained model saved: {model_path}")
+    def __init__(self, dictionary_path: str = 'dictionary.txt'):
+        self.move_generator = MoveGenerator(dictionary_path)
+        self.training_stats = {
+            'training_mode': 'vs_quackle',
+            'episodes_completed': 0,
+            'total_training_time': 0,
+            'agent_scores': [],
+            'quackle_scores': [],
+            'score_gaps': [],
+            'wins': [],
+            'td_errors': [],
+            'weight_evolution': [],
+            'evaluation_results': []
+        }
         
-        # Save training data
-        training_data_path = f"self_play_data_{timestamp}.json"
-        trainer.save_training_data(training_data_path)
-        print(f"Training data saved: {training_data_path}")
+        # Ensure plot directory exists
+        os.makedirs('plot', exist_ok=True)
     
-    return trained_agent
-
-
-def main_with_self_play():
-    """Enhanced main function with self-play support"""
-    import argparse
+    def train_vs_quackle(self, agent: AdaptiveScrabbleQLearner, num_episodes: int,
+                        evaluation_interval: int = 25, save_interval: int = 250, 
+                        verbose: bool = True) -> AdaptiveScrabbleQLearner:
+        """
+        Train the agent against Quackle opponent with comprehensive tracking.
+        """
+        from scrabble_agent import QuackleAgent
+        
+        if verbose:
+            print("🦆 QUACKLE TRAINING STARTED")
+            print("=" * 50)
+            print(f"Training Episodes: {num_episodes}")
+            print(f"Evaluation Interval: {evaluation_interval}")
+            print(f"Experience Replay: Buffer {agent.experience_buffer.max_size}, Batch {agent.batch_size}")
+            print("=" * 50)
+        
+        # Initialize Quackle opponent
+        quackle_opponent = QuackleAgent()
+        
+        # Reset training stats for this session
+        self._reset_training_stats()
+        
+        start_time = time.time()
+        
+        for episode in range(1, num_episodes + 1):
+            episode_start_time = time.time()
+            
+            # Play one training game
+            game_result = self._play_vs_quackle_game(agent, quackle_opponent)
+            
+            # Train agent from the game experience
+            if game_result['agent_experiences']:
+                agent.train_on_episode(game_result['agent_experiences'])
+                td_error = agent.get_last_td_error()
+                self.training_stats['td_errors'].append(td_error)
+            
+            # Store game results
+            self.training_stats['agent_scores'].append(game_result['agent_score'])
+            self.training_stats['quackle_scores'].append(game_result['quackle_score'])
+            self.training_stats['score_gaps'].append(game_result['final_score_gap'])
+            self.training_stats['wins'].append(game_result['agent_won'])
+            self.training_stats['episodes_completed'] += 1
+            
+            episode_time = time.time() - episode_start_time
+            
+            # Periodic evaluation and progress reporting
+            if episode % evaluation_interval == 0:
+                recent_games = evaluation_interval
+                recent_wins = sum(self.training_stats['wins'][-recent_games:])
+                recent_avg_score = np.mean(self.training_stats['agent_scores'][-recent_games:])
+                recent_avg_gap = np.mean(self.training_stats['score_gaps'][-recent_games:])
+                win_rate = recent_wins / recent_games
+                
+                # Store evaluation
+                eval_result = {
+                    'episode': episode,
+                    'win_rate': win_rate,
+                    'avg_score': recent_avg_score,
+                    'avg_score_gap': recent_avg_gap,
+                    'epsilon': agent.epsilon,
+                    'buffer_size': agent.experience_buffer.size()
+                }
+                self.training_stats['evaluation_results'].append(eval_result)
+                
+                if verbose:
+                    print(f"[Episode {episode:4d}] "
+                          f"vs Quackle - WR: {win_rate:5.1%} | "
+                          f"Score: {recent_avg_score:5.1f} | "
+                          f"Gap: {recent_avg_gap:+5.1f} | "
+                          f"ε: {agent.epsilon:.3f} | "
+                          f"Buffer: {agent.experience_buffer.size():4d} | "
+                          f"Time: {format_time(episode_time)}")
+            
+            # Save checkpoints
+            if save_interval > 0 and episode % save_interval == 0:
+                checkpoint_path = f"quackle_checkpoint_ep{episode}.json"
+                agent.save_model(checkpoint_path)
+                if verbose:
+                    print(f"    Checkpoint saved: {checkpoint_path}")
+        
+        total_time = time.time() - start_time
+        self.training_stats['total_training_time'] = total_time
+        
+        # Generate final summary
+        if verbose:
+            self._print_quackle_training_summary()
+        
+        # Generate plots
+        self._plot_quackle_training_progress()
+        
+        return agent
     
-    parser = argparse.ArgumentParser(description='Scrabble RL Agent with Self-Play Training')
-    subparsers = parser.add_subparsers(dest='command', help='Available commands')
+    def _reset_training_stats(self):
+        """Reset training statistics for a new training session"""
+        self.training_stats = {
+            'training_mode': 'vs_quackle',
+            'episodes_completed': 0,
+            'total_training_time': 0,
+            'agent_scores': [],
+            'quackle_scores': [],
+            'score_gaps': [],
+            'wins': [],
+            'td_errors': [],
+            'weight_evolution': [],
+            'evaluation_results': []
+        }
     
-    # Self-play training command
-    self_play_parser = subparsers.add_parser('self-play', help='Train agent using self-play')
-    self_play_parser.add_argument('--episodes', type=int, default=2000,
-                                 help='Number of self-play episodes (default: 2000)')
-    self_play_parser.add_argument('--learning-rate', type=float, default=0.01,
-                                 help='Learning rate (default: 0.01)')
-    self_play_parser.add_argument('--epsilon', type=float, default=0.3,
-                                 help='Initial exploration rate (default: 0.3)')
-    self_play_parser.add_argument('--gamma', type=float, default=0.9,
-                                 help='Discount factor (default: 0.9)')
-    self_play_parser.add_argument('--buffer-size', type=int, default=5000,
-                                 help='Experience replay buffer size (default: 5000)')
-    self_play_parser.add_argument('--greedy-eval-interval', type=int, default=1,
-                                 help='Evaluate vs greedy every N episodes (default: 1)')
-    self_play_parser.add_argument('--greedy-eval-games', type=int, default=3,
-                                 help='Games vs greedy per evaluation (default: 3)')
-    self_play_parser.add_argument('--save-model', action='store_true',
-                                 help='Save trained model')
-    self_play_parser.add_argument('--dictionary', default='dictionary.txt',
-                                 help='Dictionary file path')
+    def _play_vs_quackle_game(self, agent: AdaptiveScrabbleQLearner, 
+                             quackle_opponent) -> Dict:
+        """
+        Play a single game between RL agent and Quackle opponent
+        """
+        board = create_empty_board()
+        tile_bag = create_tile_bag()
+        
+        agent_rack = draw_tiles(tile_bag, 7)
+        quackle_rack = draw_tiles(tile_bag, 7)
+        
+        agent_score = 0
+        quackle_score = 0
+        rounds_played = 0
+        max_rounds = 50
+        
+        agent_experiences = []
+        
+        while len(tile_bag) > 0 and rounds_played < max_rounds:
+            # Agent's turn
+            agent_state = create_game_state(
+                board, agent_rack, [], agent_score, quackle_score,
+                len(tile_bag), rounds_played
+            )
+            
+            valid_moves = self.move_generator.get_valid_moves(
+                board, agent_rack, sampling_rate=0.5  # Higher sampling for Quackle training
+            )
+            
+            if valid_moves:
+                chosen_move = agent.choose_move(agent_state, valid_moves, training=True)
+                
+                if chosen_move:
+                    old_state = agent_state.copy()
+                    
+                    # Apply agent's move
+                    board = place_word_on_board(board, chosen_move['word'], chosen_move['positions'])
+                    agent_score += chosen_move['score']
+                    
+                    # Update agent's rack
+                    tiles_drawn = draw_tiles(tile_bag, len(chosen_move['tiles_used']))
+                    agent_rack = get_rack_after_move(
+                        agent_rack, chosen_move['tiles_used'], tiles_drawn
+                    )
+                    
+                    # Create new state for reward calculation
+                    new_state = create_game_state(
+                        board, agent_rack, [], agent_score, quackle_score,
+                        len(tile_bag), rounds_played
+                    )
+                    
+                    # Calculate reward
+                    reward = agent.calculate_reward(old_state, new_state, chosen_move)
+                    
+                    # Store experience
+                    experience = {
+                        'state': old_state,
+                        'move': chosen_move,
+                        'reward': reward,
+                        'next_state': new_state,
+                        'terminal': False
+                    }
+                    agent_experiences.append(experience)
+                    
+                    # Record move for Quackle (if needed for GCG tracking)
+                    try:
+                        quackle_opponent.agent.to_quackle_input("us", chosen_move)
+                    except Exception as e:
+                        # Handle GCG recording errors gracefully
+                        if "file" not in str(e).lower():
+                            print(f"Warning: GCG recording issue: {e}")
+            
+            # Quackle's turn
+            if len(tile_bag) > 0:
+                quackle_state = create_game_state(
+                    board, quackle_rack, [], quackle_score, agent_score,
+                    len(tile_bag), rounds_played
+                )
+                
+                quackle_moves = self.move_generator.get_valid_moves(
+                    board, quackle_rack, sampling_rate=0.5
+                )
+                
+                if quackle_moves:
+                    try:
+                        quackle_move = quackle_opponent.choose_move(
+                            quackle_state, quackle_moves, training=False
+                        )
+                        
+                        if quackle_move:
+                            # Apply Quackle's move
+                            board = place_word_on_board(
+                                board, quackle_move['word'], quackle_move['positions']
+                            )
+                            quackle_score += quackle_move['score']
+                            
+                            # Update Quackle's rack
+                            quackle_tiles_drawn = draw_tiles(tile_bag, len(quackle_move['tiles_used']))
+                            quackle_rack = get_rack_after_move(
+                                quackle_rack, quackle_move['tiles_used'], quackle_tiles_drawn
+                            )
+                            
+                            # Record Quackle's move
+                            try:
+                                quackle_opponent.agent.to_quackle_input("quackle", quackle_move)
+                            except Exception as e:
+                                if "file" not in str(e).lower():
+                                    print(f"Warning: Quackle GCG recording issue: {e}")
+                        
+                    except Exception as e:
+                        print(f"Warning: Quackle move generation failed: {e}")
+                        # Fallback to random valid move
+                        if quackle_moves:
+                            quackle_move = random.choice(quackle_moves)
+                            board = place_word_on_board(
+                                board, quackle_move['word'], quackle_move['positions']
+                            )
+                            quackle_score += quackle_move['score']
+                            
+                            quackle_tiles_drawn = draw_tiles(tile_bag, len(quackle_move['tiles_used']))
+                            quackle_rack = get_rack_after_move(
+                                quackle_rack, quackle_move['tiles_used'], quackle_tiles_drawn
+                            )
+            
+            rounds_played += 1
+            
+            # Break if no valid moves for both players
+            if not valid_moves and not quackle_moves:
+                break
+        
+        # Mark final experience as terminal
+        if agent_experiences:
+            agent_experiences[-1]['terminal'] = True
+        
+        final_score_gap = agent_score - quackle_score
+        agent_won = final_score_gap > 0
+        
+        return {
+            'agent_score': agent_score,
+            'quackle_score': quackle_score,
+            'final_score_gap': final_score_gap,
+            'agent_won': agent_won,
+            'rounds_played': rounds_played,
+            'agent_experiences': agent_experiences
+        }
     
-    args = parser.parse_args()
+    def _print_quackle_training_summary(self):
+        """Print comprehensive Quackle training summary"""
+        print(f"\n" + "="*60)
+        print(f"🦆 QUACKLE TRAINING COMPLETED")
+        print(f"="*60)
+        
+        episodes = len(self.training_stats['agent_scores'])
+        total_wins = sum(self.training_stats['wins'])
+        win_rate = total_wins / episodes if episodes > 0 else 0
+        
+        avg_agent_score = np.mean(self.training_stats['agent_scores'])
+        avg_quackle_score = np.mean(self.training_stats['quackle_scores'])
+        avg_score_gap = np.mean(self.training_stats['score_gaps'])
+        
+        print(f"Total Episodes: {episodes}")
+        print(f"Overall Win Rate vs Quackle: {win_rate:.1%}")
+        print(f"Average Agent Score: {avg_agent_score:.1f}")
+        print(f"Average Quackle Score: {avg_quackle_score:.1f}")
+        print(f"Average Score Gap: {avg_score_gap:+.1f}")
+        
+        # Performance assessment
+        if win_rate > 0.6:
+            print("🚀 EXCELLENT - Agent performs well against Quackle!")
+        elif win_rate > 0.5:
+            print("✅ GOOD - Agent is competitive with Quackle")
+        elif win_rate > 0.4:
+            print("📊 FAIR - Agent shows promise against Quackle")
+        else:
+            print("⚠️ NEEDS WORK - Agent struggles against Quackle")
+        
+        # Learning progression
+        if len(self.training_stats['evaluation_results']) >= 2:
+            early_wr = self.training_stats['evaluation_results'][0]['win_rate']
+            final_wr = self.training_stats['evaluation_results'][-1]['win_rate']
+            improvement = final_wr - early_wr
+            
+            print(f"\nLearning Progress:")
+            print(f"Early Win Rate: {early_wr:.1%}")
+            print(f"Final Win Rate: {final_wr:.1%}")
+            print(f"Improvement: {improvement:+.1%}")
+            
+            if improvement > 0.15:
+                print("📈 Strong learning curve!")
+            elif improvement > 0.05:
+                print("📈 Good improvement shown")
+            elif improvement > 0:
+                print("📊 Modest improvement")
+            else:
+                print("📉 No clear improvement - may need more episodes")
+        
+        print(f"="*60)
     
-    if not args.command:
-        parser.print_help()
-        return
+    def _plot_quackle_training_progress(self):
+        """Generate training progress plots for Quackle training"""
+        
+        if not self.training_stats['agent_scores']:
+            print("No training data to plot")
+            return
+        
+        plt.figure(figsize=(16, 12))
+        episodes = np.arange(1, len(self.training_stats['agent_scores']) + 1)
+        
+        # Plot 1: Score Evolution
+        plt.subplot(2, 3, 1)
+        agent_scores = self.training_stats['agent_scores']
+        quackle_scores = self.training_stats['quackle_scores']
+        
+        plt.plot(episodes, agent_scores, alpha=0.6, label='RL Agent', color='blue')
+        plt.plot(episodes, quackle_scores, alpha=0.6, label='Quackle', color='orange')
+        
+        # Moving averages
+        window = max(10, len(episodes) // 20)
+        if len(episodes) >= window:
+            agent_ma = moving_average(agent_scores, window)
+            quackle_ma = moving_average(quackle_scores, window)
+            plt.plot(episodes[window-1:], agent_ma, '--', linewidth=2, 
+                    color='darkblue', label='Agent MA')
+            plt.plot(episodes[window-1:], quackle_ma, '--', linewidth=2, 
+                    color='darkorange', label='Quackle MA')
+        
+        plt.xlabel('Episode')
+        plt.ylabel('Score')
+        plt.title('Score Evolution: RL Agent vs Quackle')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Plot 2: Score Gaps
+        plt.subplot(2, 3, 2)
+        score_gaps = self.training_stats['score_gaps']
+        plt.plot(episodes, score_gaps, alpha=0.7, color='purple')
+        plt.axhline(y=0, color='black', linestyle='-', alpha=0.5)
+        plt.fill_between(episodes, score_gaps, 0, where=(np.array(score_gaps) >= 0), 
+                        color='green', alpha=0.3, label='Agent Wins')
+        plt.fill_between(episodes, score_gaps, 0, where=(np.array(score_gaps) < 0), 
+                        color='red', alpha=0.3, label='Quackle Wins')
+        
+        if len(episodes) >= window:
+            gap_ma = moving_average(score_gaps, window)
+            plt.plot(episodes[window-1:], gap_ma, '--', linewidth=2, 
+                    color='darkpurple', label='Score Gap MA')
+        
+        plt.xlabel('Episode')
+        plt.ylabel('Score Gap (Agent - Quackle)')
+        plt.title('Score Gap Evolution')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Plot 3: Win Rate Over Time
+        plt.subplot(2, 3, 3)
+        if self.training_stats['evaluation_results']:
+            eval_episodes = [r['episode'] for r in self.training_stats['evaluation_results']]
+            win_rates = [r['win_rate'] * 100 for r in self.training_stats['evaluation_results']]
+            
+            plt.plot(eval_episodes, win_rates, 'o-', linewidth=2, markersize=4, 
+                    color='green', label='Win Rate vs Quackle')
+            plt.axhline(y=50, color='black', linestyle='--', alpha=0.5, label='50% (Even)')
+            
+            plt.xlabel('Episode')
+            plt.ylabel('Win Rate (%)')
+            plt.title('Win Rate vs Quackle Over Training')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.ylim(0, 100)
+        
+        # Plot 4: TD Error Evolution
+        plt.subplot(2, 3, 4)
+        if self.training_stats['td_errors']:
+            td_episodes = np.arange(1, len(self.training_stats['td_errors']) + 1)
+            td_errors = self.training_stats['td_errors']
+            
+            plt.plot(td_episodes, td_errors, alpha=0.7, color='red')
+            if len(td_errors) >= 10:
+                td_ma = moving_average(td_errors, min(20, len(td_errors)//5))
+                plt.plot(td_episodes[len(td_episodes)-len(td_ma):], td_ma, 
+                        '--', linewidth=2, color='darkred', label='TD Error MA')
+            
+            plt.xlabel('Episode')
+            plt.ylabel('TD Error')
+            plt.title('TD Error Evolution')
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+        
+        # Plot 5: Score Distribution Comparison
+        plt.subplot(2, 3, 5)
+        plt.hist(agent_scores, bins=25, alpha=0.7, label='RL Agent', 
+                color='blue', density=True)
+        plt.hist(quackle_scores, bins=25, alpha=0.7, label='Quackle', 
+                color='orange', density=True)
+        plt.axvline(np.mean(agent_scores), color='darkblue', linestyle='--', 
+                   label=f'Agent Avg: {np.mean(agent_scores):.1f}')
+        plt.axvline(np.mean(quackle_scores), color='darkorange', linestyle='--', 
+                   label=f'Quackle Avg: {np.mean(quackle_scores):.1f}')
+        
+        plt.xlabel('Score')
+        plt.ylabel('Density')
+        plt.title('Score Distribution Comparison')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        
+        # Plot 6: Cumulative Win Rate
+        plt.subplot(2, 3, 6)
+        cumulative_wins = np.cumsum(self.training_stats['wins'])
+        cumulative_win_rate = cumulative_wins / episodes * 100
+        
+        plt.plot(episodes, cumulative_win_rate, linewidth=2, color='darkgreen')
+        plt.axhline(y=50, color='black', linestyle='--', alpha=0.5, label='50%')
+        plt.fill_between(episodes, cumulative_win_rate, 50, 
+                        where=(cumulative_win_rate >= 50), 
+                        color='green', alpha=0.3, label='Above 50%')
+        plt.fill_between(episodes, cumulative_win_rate, 50, 
+                        where=(cumulative_win_rate < 50), 
+                        color='red', alpha=0.3, label='Below 50%')
+        
+        plt.xlabel('Episode')
+        plt.ylabel('Cumulative Win Rate (%)')
+        plt.title('Cumulative Win Rate vs Quackle')
+        plt.legend()
+        plt.grid(True, alpha=0.3)
+        plt.ylim(0, 100)
+        
+        plt.tight_layout()
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        plot_path = f'plot/quackle_training_{timestamp}.png'
+        plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        print(f"Quackle training plots saved: {plot_path}")
     
-    if args.command == 'self-play':
-        train_self_play_agent(args)
-
-
-if __name__ == "__main__":
-    main_with_self_play()
+    def get_training_summary(self) -> Dict:
+        """Get training summary for Quackle training"""
+        episodes = len(self.training_stats['agent_scores'])
+        if episodes > 0:
+            final_performance = {
+                'win_rate': sum(self.training_stats['wins']) / episodes,
+                'avg_score': np.mean(self.training_stats['agent_scores']),
+                'avg_score_gap': np.mean(self.training_stats['score_gaps'])
+            }
+            return {
+                'final_performance': final_performance,
+                'training_mode': 'vs_quackle',
+                'episodes_completed': episodes,
+                'total_training_time': self.training_stats.get('total_training_time', 0)
+            }
+        
+        return {'final_performance': None}
+    
+    def save_training_data(self, filepath: str):
+        """Save Quackle training statistics"""
+        training_data = {
+            'training_stats': self.training_stats,
+            'timestamp': datetime.now().isoformat(),
+            'training_mode': 'vs_quackle',
+            'version': '1.0_quackle_training'
+        }
+        save_game_data(training_data, filepath)

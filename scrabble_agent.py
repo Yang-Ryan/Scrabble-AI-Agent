@@ -1135,18 +1135,25 @@ class GreedyAgent:
         return max(valid_moves, key=lambda move: move.get('score', 0))
 
 class QuackleAgent: 
-    """Quackle Agent"""
+    """Quackle Agent - Fixed version"""
 
     def __init__(self) :
         self.name = "Quackle"
-        self.agent = qa()
+        self.agent = qa()  # Import should be: from quackle_agent import QuackleAgent as qa
 
-
-    def choose_move(self, : state: Dict, valid_moves: List[Dict], 
-                   training: bool = True, gcg_abs_path: str):
-        if not valid_moves : return None
-        move = self.agent.choose_move(state, valid_moves, training, gcg_abs_path)
-        return move
+    def choose_move(self, state: Dict, valid_moves: List[Dict], 
+                   training: bool = True) -> Optional[Dict]:
+        """Choose move using Quackle engine"""
+        if not valid_moves:
+            return None
+        
+        try:
+            move = self.agent.choose_move(state, valid_moves, training)
+            return move
+        except Exception as e:
+            print(f"Warning: Quackle move selection failed: {e}")
+            # Fallback to random move if Quackle fails
+            return random.choice(valid_moves) if valid_moves else None
 
 
 def main():

@@ -24,7 +24,7 @@ To train our model, you can add many command line args:
 3. play game!
 
 ```bash
-python main.py train \
+python main.py train-greedy \
     --episodes 1000 \
     --learning-rate 0.02 \
     --epsilon 0.4 \
@@ -32,6 +32,15 @@ python main.py train \
     --eval-interval 25 \
     --multi-horizon \
     --save-model \
+
+python3 main.py train-quackle \
+  --episodes 1000 \
+  --learning-rate 0.02 \
+  --epsilon 0.4 \
+  --gamma 0.95 \
+  --eval-interval 25 \
+  --multi-horizon \
+  --save-model
 
 python main.py self-play \
     --episodes 5000 \

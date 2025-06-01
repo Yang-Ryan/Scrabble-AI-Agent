@@ -10,7 +10,7 @@ from pathlib import Path
 
 # Import all necessary components
 from scrabble_agent import AdaptiveScrabbleQLearner, GreedyAgent
-from trainer import SelfPlayTrainer
+from trainer import SelfPlayTrainer, QuackleTrainer
 from utils import save_game_data
 
 def train_agent(args):
@@ -124,6 +124,65 @@ def train_self_play_agent(args):
     
     return trained_agent
 
+def train_quackle_agent(args):
+    """Train agent against Quackle opponent using QuackleTrainer"""
+    print("🦆 QUACKLE TRAINING MODE")
+    print("=" * 50)
+    print(f"Episodes: {args.episodes} (RL vs Quackle)")
+    print(f"Learning Rate: {args.learning_rate}")
+    print(f"Epsilon: {args.epsilon}")
+    print(f"Gamma: {args.gamma}")
+    print(f"Multi-horizon: {args.multi_horizon}")
+    print(f"Dictionary: {args.dictionary}")
+    print()
+    
+    # Create agent
+    agent = AdaptiveScrabbleQLearner(
+        num_features=8,
+        learning_rate=args.learning_rate,
+        epsilon=args.epsilon,
+        gamma=args.gamma,
+        buffer_size=getattr(args, 'buffer_size', 2000),
+        batch_size=32,
+        target_update_frequency=100,
+        use_multi_horizon=args.multi_horizon  
+    )
+    
+    # Create Quackle trainer
+    quackle_trainer = QuackleTrainer(args.dictionary)
+    
+    # Train agent against Quackle opponent
+    trained_agent = quackle_trainer.train_vs_quackle(
+        agent=agent,
+        num_episodes=args.episodes,
+        evaluation_interval=args.eval_interval,
+        save_interval=getattr(args, 'save_interval', 250),
+        verbose=True
+    )
+    
+    # Save trained model
+    if args.save_model:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        model_path = f"quackle_model_{timestamp}_ep{args.episodes}.json"
+        trained_agent.save_model(model_path)
+        print(f"\nTrained model saved: {model_path}")
+        
+        # Save training data
+        training_data_path = f"quackle_training_data_{timestamp}.json"
+        quackle_trainer.save_training_data(training_data_path)
+        print(f"Training data saved: {training_data_path}")
+    
+    # Final performance summary
+    summary = quackle_trainer.get_training_summary()
+    if summary.get('final_performance'):
+        perf = summary['final_performance']
+        print(f"\nFinal Training Performance vs Quackle:")
+        print(f"Win Rate: {perf['win_rate']:.1%}")
+        print(f"Average Score: {perf['avg_score']:.1f}")
+        print(f"Average Score Gap: {perf['avg_score_gap']:+.1f}")
+    
+    return trained_agent
+
 def play_vs_human(args):
     """Launch Human vs AI game interface"""
     print("🎮 LAUNCHING HUMAN VS AI GAME")
@@ -219,7 +278,7 @@ def main():
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
     
     # Regular training command
-    train_parser = subparsers.add_parser('train', help='Train agent vs greedy opponent')
+    train_parser = subparsers.add_parser('train-greedy', help='Train agent vs greedy opponent')
     train_parser.add_argument('--episodes', type=int, default=500,
                              help='Number of training episodes (default: 500)')
     train_parser.add_argument('--learning-rate', type=float, default=0.01,

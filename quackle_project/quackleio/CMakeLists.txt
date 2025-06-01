@@ -43,12 +43,15 @@ set(QUACKLEIO_HEADERS
 	util.h
 )
 
-add_library(quackleio
+add_library(quackleio SHARED
 	${QUACKLEIO_SOURCES} ${QUACKLEIO_HEADERS}
 )
+
 target_include_directories(quackleio PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/..")
+
+# ✅ Link against libquackle and Qt
 if("${QT_VERSION}" MATCHES "^6")
-	target_link_libraries(quackleio Qt6::Core)
+	target_link_libraries(quackleio libquackle Threads::Threads Qt6::Core)
 else()
-	target_link_libraries(quackleio Qt5::Core)
+	target_link_libraries(quackleio libquackle Threads::Threads Qt5::Core)
 endif()
