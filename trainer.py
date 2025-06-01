@@ -296,10 +296,29 @@ class SelfPlayTrainer:
         }
 
     def _train_vs_greedy(self, agent: AdaptiveScrabbleQLearner, num_episodes: int,
-                 evaluation_interval: int = 100, save_interval: int = 500, verbose: bool = True) -> AdaptiveScrabbleQLearner:
+                 greedy_eval_interval: int = 50, greedy_eval_games: int = 3, 
+                 verbose: bool = True) -> AdaptiveScrabbleQLearner:
         """
         Train the agent against a GreedyAgent opponent with comprehensive tracking.
+        Uses the same argument pattern as self-play training.
+        
+        Args:
+            agent: The RL agent to train
+            num_episodes: Number of training episodes against greedy
+            greedy_eval_interval: How often to evaluate (episodes)
+            greedy_eval_games: Number of games per evaluation interval
+            verbose: Print progress updates
         """
+        if verbose:
+            print("🎯 GREEDY TRAINING WITH PERIODIC EVALUATION")
+            print("=" * 60)
+            print(f"Training Episodes: {num_episodes} (RL vs Greedy)")
+            print(f"Evaluation: Every {greedy_eval_interval} episode(s)")
+            print(f"Games per Evaluation: {greedy_eval_games}")
+            print(f"Experience Replay: Buffer {agent.experience_buffer.max_size}, Batch {agent.batch_size}")
+            print(f"Target Network: Update every {agent.target_update_frequency} updates")
+            print("=" * 60)
+        
         greedy_opponent = GreedyAgent()
         
         # Enhanced training statistics matching self-play format
@@ -426,31 +445,30 @@ class SelfPlayTrainer:
             
             episode_time = time.time() - episode_start_time
 
-            # Periodic evaluation and progress reporting
-            if evaluation_interval > 0 and episode % evaluation_interval == 0:
+            # PERIODIC EVALUATION (same pattern as self-play)
+            if episode % greedy_eval_interval == 0:
                 eval_start_time = time.time()
                 
-                recent_games = evaluation_interval
-                recent_wins = sum(self.training_stats['wins'][-recent_games:])
-                recent_avg_score = np.mean(self.training_stats['agent_scores'][-recent_games:])
-                recent_avg_gap = np.mean(self.training_stats['score_gaps'][-recent_games:])
-                win_rate = recent_wins / recent_games
+                # Evaluate current agent vs greedy using separate games
+                greedy_results = self._evaluate_vs_greedy(agent, greedy_opponent, greedy_eval_games)
                 
                 # Store evaluation results
                 eval_result = {
                     'episode': episode,
-                    'win_rate': win_rate,
-                    'avg_score': recent_avg_score,
-                    'avg_score_gap': recent_avg_gap,
+                    'win_rate': greedy_results['win_rate'],
+                    'avg_score': greedy_results['avg_score'],
+                    'avg_score_gap': greedy_results['avg_score_gap'],
                     'epsilon': agent.epsilon,
                     'buffer_size': agent.experience_buffer.size()
                 }
                 
                 self.training_stats['eval_episodes'].append(episode)
                 self.training_stats['eval_results'].append(eval_result)
-                self.training_stats['eval_win_rates'].append(win_rate)
-                self.training_stats['eval_avg_scores'].append(recent_avg_score)
-                self.training_stats['eval_score_gaps'].append(recent_avg_gap)
+                self.training_stats['eval_win_rates'].append(greedy_results['win_rate'])
+                self.training_stats['eval_avg_scores'].append(greedy_results['avg_score'])
+                self.training_stats['eval_score_gaps'].append(greedy_results['avg_score_gap'])
+                
+                eval_time = time.time() - eval_start_time
                 
                 # Network analysis
                 network_analysis = agent.analyze_networks()
@@ -468,24 +486,18 @@ class SelfPlayTrainer:
                     'target_updates': agent.target_updates
                 }
                 self.training_stats['buffer_statistics'].append(buffer_stats)
-                
-                eval_time = time.time() - eval_start_time
 
                 if verbose:
-                    print(f"[Episode {episode:4d}] "
-                        f"vs Greedy - WR: {win_rate:5.1%} | "
-                        f"Score: {recent_avg_score:5.1f} | "
-                        f"Gap: {recent_avg_gap:+5.1f} | "
-                        f"ε: {agent.epsilon:.3f} | "
-                        f"Buffer: {agent.experience_buffer.size():4d} | "
-                        f"Time: {format_time(episode_time + eval_time)}")
-
-            # Save checkpoints
-            if save_interval > 0 and episode % save_interval == 0:
-                checkpoint_path = f"greedy_checkpoint_ep{episode}.json"
-                agent.save_model(checkpoint_path)
-                if verbose:
-                    print(f"    Checkpoint saved: {checkpoint_path}")
+                    self._print_greedy_progress(
+                        episode, agent_score, opponent_score, final_score_gap, agent_won,
+                        greedy_results, network_analysis, buffer_stats, episode_time, eval_time
+                    )
+            elif verbose and episode % 50 == 0:
+                # Print basic progress without evaluation
+                print(f"Episode {episode:4d} | "
+                    f"Training: {agent_score:3.0f} vs {opponent_score:3.0f} | "
+                    f"Gap: {final_score_gap:+4.0f} | "
+                    f"Time: {format_time(episode_time)}")
         
         # Generate plots after training
         self.plot_greedy_training_progress()
@@ -508,6 +520,26 @@ class SelfPlayTrainer:
         }
         
         return agent
+
+
+    def _print_greedy_progress(self, episode: int, agent_score: int, opponent_score: int,
+                            score_gap: int, agent_won: bool, greedy_results: Dict,
+                            network_analysis: Dict, buffer_stats: Dict, 
+                            episode_time: float, eval_time: float):
+        """Print progress for greedy training (similar to self-play format)"""
+        print(f"Episode {episode:4d} | "
+            f"Training: {agent_score:3.0f} vs {opponent_score:3.0f} | "
+            f"Gap: {score_gap:+4.0f}")
+        
+        print(f"             | "
+            f"Evaluation: {greedy_results['win_rate']:5.1%} WR | "
+            f"Score: {greedy_results['avg_score']:5.1f} | "
+            f"Gap: {greedy_results['avg_score_gap']:+5.1f}")
+        
+        print(f"             | "
+            f"Buffer: {buffer_stats['buffer_size']:4d}/{buffer_stats['buffer_utilization']*100:3.0f}% | "
+            f"Updates: {buffer_stats['target_updates']:3d} | "
+            f"Time: {format_time(episode_time + eval_time)}")
 
     def plot_greedy_training_progress(self):
         """Generate comprehensive greedy training plots (same 9 plots as self-play)"""

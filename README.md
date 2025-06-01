@@ -24,16 +24,17 @@ To train our model, you can add many command line args:
 3. play game!
 
 ```bash
-python main.py train \
-    --episodes 1000 \
-    --learning-rate 0.02 \
-    --epsilon 0.4 \
-    --gamma 0.95 \
-    --eval-interval 25 \
+python3 main.py train \
+    --episodes 2000 \
+    --learning-rate 0.01 \
+    --epsilon 0.3 \
+    --buffer-size 2000 \
+    --greedy-eval-interval 1 \
+    --greedy-eval-games 3 \
     --multi-horizon \
-    --save-model \
+    --save-model
 
-python main.py self-play \
+python3 main.py self-play \
     --episodes 5000 \
     --learning-rate 0.015 \
     --epsilon 0.4 \

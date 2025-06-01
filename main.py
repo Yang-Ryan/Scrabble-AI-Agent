@@ -13,13 +13,15 @@ from scrabble_agent import AdaptiveScrabbleQLearner, GreedyAgent
 from trainer import SelfPlayTrainer
 from utils import save_game_data
 
+# Updated train_agent function
 def train_agent(args):
-    """Train agent against greedy opponent"""
-    print("🎯 REGULAR TRAINING MODE")
+    """Train agent against greedy opponent with consistent arguments"""
+    print("🎯 GREEDY TRAINING MODE")
     print("=" * 40)
     print(f"Episodes: {args.episodes}")
     print(f"Learning Rate: {args.learning_rate}")
-    print(f"Opponent: {args.opponent}")
+    print(f"Evaluation: Every {args.greedy_eval_interval} episodes")
+    print(f"Games per Evaluation: {args.greedy_eval_games}")
     print(f"Dictionary: {args.dictionary}")
     print()
     
@@ -29,7 +31,7 @@ def train_agent(args):
         learning_rate=args.learning_rate,
         epsilon=args.epsilon,
         gamma=args.gamma,
-        buffer_size=2000,
+        buffer_size=args.buffer_size,
         batch_size=32,
         target_update_frequency=100,
         use_multi_horizon=args.multi_horizon  
@@ -42,20 +44,20 @@ def train_agent(args):
     trained_agent = trainer._train_vs_greedy(
         agent=agent,
         num_episodes=args.episodes,
-        evaluation_interval=args.eval_interval,
-        save_interval=args.save_interval,
+        greedy_eval_interval=args.greedy_eval_interval,
+        greedy_eval_games=args.greedy_eval_games,
         verbose=True
     )
     
     # Save trained model
     if args.save_model:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        model_path = f"rl_model_{timestamp}_ep{args.episodes}.json"
+        model_path = f"greedy_model_{timestamp}_ep{args.episodes}.json"
         trained_agent.save_model(model_path)
         print(f"\nTrained model saved: {model_path}")
         
         # Save training data
-        training_data_path = f"training_data_{timestamp}.json"
+        training_data_path = f"greedy_training_data_{timestamp}.json"
         trainer.save_training_data(training_data_path)
         print(f"Training data saved: {training_data_path}")
     
@@ -218,52 +220,54 @@ def main():
     parser = argparse.ArgumentParser(description='🎮 Scrabble RL Agent - Training, Analysis & Human Play')
     subparsers = parser.add_subparsers(dest='command', help='Available commands')
     
-    # Regular training command
+    # Regular training command (updated to match self-play pattern)
     train_parser = subparsers.add_parser('train', help='Train agent vs greedy opponent')
-    train_parser.add_argument('--episodes', type=int, default=500,
-                             help='Number of training episodes (default: 500)')
+    train_parser.add_argument('--episodes', type=int, default=2000,
+                            help='Number of training episodes (default: 2000)')
     train_parser.add_argument('--learning-rate', type=float, default=0.01,
-                             help='Learning rate (default: 0.01)')
+                            help='Learning rate (default: 0.01)')
     train_parser.add_argument('--epsilon', type=float, default=0.3,
-                             help='Initial exploration rate (default: 0.3)')
+                            help='Initial exploration rate (default: 0.3)')
     train_parser.add_argument('--gamma', type=float, default=0.9,
-                             help='Discount factor (default: 0.9)')
-    train_parser.add_argument('--opponent', choices=['greedy'], 
-                             default='greedy', help='Training opponent type')
-    train_parser.add_argument('--eval-interval', type=int, default=50,
-                             help='Evaluation interval (default: 50)')
-    train_parser.add_argument('--save-interval', type=int, default=250,
-                             help='Model save interval (default: 250)')
+                            help='Discount factor (default: 0.9)')
+    train_parser.add_argument('--buffer-size', type=int, default=5000,
+                            help='Experience replay buffer size (default: 5000)')
+    train_parser.add_argument('--greedy-eval-interval', type=int, default=1,
+                            help='Evaluate vs greedy every N episodes (default: 1)')
+    train_parser.add_argument('--greedy-eval-games', type=int, default=3,
+                            help='Games vs greedy per evaluation (default: 3)')
     train_parser.add_argument('--save-model', action='store_true',
-                             help='Save trained model')
+                            help='Save trained model')
     train_parser.add_argument('--dictionary', default='dictionary.txt',
-                             help='Dictionary file path')
+                            help='Dictionary file path')
     train_parser.add_argument('--multi-horizon', action='store_true',
-                           help='Use multi-horizon learning')
-    
-    # Self-play training command
+                            help='Use multi-horizon learning')
+
+    # Self-play training command (unchanged)
     if SelfPlayTrainer is not None:
         self_play_parser = subparsers.add_parser('self-play', help='Train agent using self-play')
         self_play_parser.add_argument('--episodes', type=int, default=2000,
-                                     help='Number of self-play episodes (default: 2000)')
+                                    help='Number of self-play episodes (default: 2000)')
         self_play_parser.add_argument('--learning-rate', type=float, default=0.01,
-                                     help='Learning rate (default: 0.01)')
+                                    help='Learning rate (default: 0.01)')
         self_play_parser.add_argument('--epsilon', type=float, default=0.3,
-                                     help='Initial exploration rate (default: 0.3)')
+                                    help='Initial exploration rate (default: 0.3)')
         self_play_parser.add_argument('--gamma', type=float, default=0.9,
-                                     help='Discount factor (default: 0.9)')
+                                    help='Discount factor (default: 0.9)')
         self_play_parser.add_argument('--buffer-size', type=int, default=5000,
-                                     help='Experience replay buffer size (default: 5000)')
+                                    help='Experience replay buffer size (default: 5000)')
         self_play_parser.add_argument('--greedy-eval-interval', type=int, default=1,
-                                     help='Evaluate vs greedy every N episodes (default: 1)')
+                                    help='Evaluate vs greedy every N episodes (default: 1)')
         self_play_parser.add_argument('--greedy-eval-games', type=int, default=3,
-                                     help='Games vs greedy per evaluation (default: 3)')
+                                    help='Games vs greedy per evaluation (default: 3)')
         self_play_parser.add_argument('--save-model', action='store_true',
-                                     help='Save trained model')
+                                    help='Save trained model')
         self_play_parser.add_argument('--dictionary', default='dictionary.txt',
-                                     help='Dictionary file path')
+                                    help='Dictionary file path')
         self_play_parser.add_argument('--multi-horizon', action='store_true',
-                           help='Use multi-horizon learning')
+                                    help='Use multi-horizon learning')
+
+
     
     # human vs ai
     play_parser = subparsers.add_parser('play', help="Play against trained AI agent")
