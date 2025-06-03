@@ -362,21 +362,19 @@ def main():
     # Parse arguments
     args = parser.parse_args()
     
-    if not args.command:
-        print("🎮 Scrabble RL Agent")
-        print("=" * 25)
-        print("Available commands:")
-        print("  train     - Train agent vs greedy opponent")
-        print("  self-play - Train agent using self-play")
-        print("  evaluate  - 📊 Evaluate trained model performance")
-        print("  play      - 🎮 Play against AI (GUI mode)")
-        print("\nUse --help with any command for details")
-        print("\n🎯 Quick start:")
-        print("  python main.py train --episodes 500 --save-model")
-        print("  python main.py evaluate 300 --model-path your_model.json")
-        print("  python main.py play")
-        return
-    
+ 
+    print("Welcome to Scrabble Agent System")
+    print("=" * 25)
+    print("\nAvailable commands:")
+    print("  train     - Train agent vs greedy opponent")
+    print("  self-play - Train agent using self-play")
+    print("  evaluate  - Evaluate trained model performance")
+    print("  play      - Play against AI ")
+    print("\n Quick start:")
+    print("  python main.py train --episodes 500 --save-model")
+    print("  python main.py evaluate 300 --model-path your_model.json")
+    print("  python main.py play")
+  
     # Execute command
     try:
         if args.command == 'train':
@@ -389,7 +387,6 @@ def main():
             play_vs_human(args)
         else:
             print(f"❌ Unknown command: {args.command}")
-            parser.print_help()
     except KeyboardInterrupt:
         print("\n⏹️  Operation cancelled by user")
     except Exception as e:

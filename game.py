@@ -1,10 +1,6 @@
-"""
-Simple Terminal Scrabble Game Interface
-Human vs AI with proper Scrabble rules
-"""
-
 import os
 import random
+import sys
 from typing import List, Dict, Optional
 from pathlib import Path
 
@@ -15,11 +11,8 @@ from utils import (create_empty_board, create_tile_bag, draw_tiles,
                   place_word_on_board, get_rack_after_move, create_game_state)
 
 class SimpleScrabbleGame:
-    """
-    Clean and simple terminal Scrabble game
-    """
     
-    def __init__(self, dictionary_path: str = 'dictionary.txt'):
+    def __init__(self, dictionary_path: str = 'dictionary.txt', model_path: str = None):
         # Initialize game components
         self.board = create_empty_board()
         self.tile_bag = create_tile_bag()
@@ -40,46 +33,104 @@ class SimpleScrabbleGame:
         # AI
         self.ai_agent = None
         self.ai_name = "No AI"
+        self.model_path = "final_model.json"
+        
+        # Auto-load AI model
+        if model_path:
+            self.load_ai(model_path)
+        else:
+            # Try to find the most recent model
+            self.auto_find_model()
+    
+    def auto_find_model(self):
+        """Look for the single .json model file"""
+        
+        # Find all .json files
+        json_files = list(Path('.').glob("*.json"))
+        
+        if len(json_files) == 1:
+            # Perfect! Found exactly one .json file
+            model_file = json_files[0]            
+            if self.load_ai(str(model_file)):
+                return
+        elif len(json_files) > 1:
+            # Multiple .json files - pick the most recent one
+            json_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+            latest_model = json_files[0]
+            
+            if self.load_ai(str(latest_model)):
+                return
+        
+        # No .json files found or loading failed
+        print("⚠️ No .json model file found, using Greedy AI as opponent")
+        self.set_greedy_ai()
     
     def clear_screen(self):
         """Clear terminal"""
         os.system('cls' if os.name == 'nt' else 'clear')
     
     def print_board(self):
-        """Print the board"""
-        print("Board:")
-        print("  A B C D E F G H I J K L M N O")
-        print("  " + "-" * 29)
+        """Print the board with better formatting"""
+        print("📋 Board:")
+        print("   A B C D E F G H I J K L M N O")
+        print("  " + "─" * 31)
         
         for i in range(15):
-            row_str = f"{i+1:2d}|"
+            row_str = f"{i+1:2d}│"
             for j in range(15):
                 cell = self.board[i][j]
                 if cell and cell != '':
                     row_str += f"{cell} "
                 else:
-                    row_str += "  "
-            row_str += "|"
+                    # Show premium squares for empty cells
+                    premium = self.get_premium_square(i, j)
+                    if premium:
+                        row_str += f"{premium} "
+                    else:
+                        row_str += "· "
+            row_str += "│"
             print(row_str)
-        print("  " + "-" * 29)
+        print("  " + "─" * 31)
+        
+        # Legend
+        print("Legend: DW=Double Word, TW=Triple Word, DL=Double Letter, TL=Triple Letter")
+    
+    def get_premium_square(self, row: int, col: int) -> str:
+        """Get premium square indicator"""
+        # Center star
+        if row == 7 and col == 7:
+            return "★"
+        
+        # Triple word scores
+        triple_word = [(0, 0), (0, 7), (0, 14), (7, 0), (7, 14), (14, 0), (14, 7), (14, 14)]
+        if (row, col) in triple_word:
+            return "T"
+        
+        # Double word scores  
+        double_word = [(1, 1), (2, 2), (3, 3), (4, 4), (1, 13), (2, 12), (3, 11), (4, 10),
+                      (13, 1), (12, 2), (11, 3), (10, 4), (13, 13), (12, 12), (11, 11), (10, 10)]
+        if (row, col) in double_word:
+            return "D"
+        
+        return ""
     
     def print_status(self):
-        """Print game status"""
-        print(f"\nLast move: {self.last_move}")
-        print(f"Turn: {self.turn_number}")
-        print(f"Scores - You: {self.human_score}, AI: {self.ai_score}")
-        print(f"AI: {self.ai_name}")
-        print(f"Tiles left: {len(self.tile_bag)}")
-        print(f"Your rack: {' '.join(self.human_rack)}")
+        """Print game status with emojis"""
+        print(f"\n📝 Last move: {self.last_move}")
+        print(f"🎲 Turn: {self.turn_number}")
+        print(f"🏆 Scores - You: {self.human_score}, AI: {self.ai_score}")
+        print(f"🤖 AI: {self.ai_name}")
+        print(f"🎯 Tiles left: {len(self.tile_bag)}")
+        print(f"🎪 Your rack: {' '.join(self.human_rack)}")
     
     def display_game(self):
         """Display complete game state"""
         self.clear_screen()
-        print("🎮 SCRABBLE GAME")
-        print("=" * 40)
+        print("🎮 SCRABBLE vs RL AGENT")
+        print("=" * 50)
         self.print_board()
         self.print_status()
-        print("=" * 40)
+        print("=" * 50)
     
     def load_ai(self, model_path: str) -> bool:
         """Load AI model"""
@@ -90,50 +141,60 @@ class SimpleScrabbleGame:
             
             self.ai_agent = AdaptiveScrabbleQLearner()
             self.ai_agent.load_model(model_path)
-            self.ai_name = f"RL Model ({Path(model_path).stem})"
-            print(f"✅ Loaded: {self.ai_name}")
+            
+            # Get model info
+            model_name = Path(model_path).stem
+            episodes = getattr(self.ai_agent, 'training_episodes', 'Unknown')
+            
+            self.ai_name = f"RL Agent ({model_name}, {episodes} episodes)"
             return True
         except Exception as e:
-            print(f"❌ Error: {e}")
+            print(f"❌ Error loading model: {e}")
             return False
     
     def set_greedy_ai(self):
-        """Use greedy AI"""
+        """Use greedy AI as fallback"""
         self.ai_agent = GreedyAgent()
-        self.ai_name = "Greedy AI"
+        self.ai_name = "Greedy AI (Fallback)"
         print("✅ Using Greedy AI")
     
     def get_human_moves(self) -> List[Dict]:
         """Get valid moves for human"""
         return self.move_generator.get_valid_moves(self.board, self.human_rack)
     
-    def show_moves(self, moves: List[Dict], limit: int = 10):
-        """Show available moves"""
+    def show_moves(self, moves: List[Dict], limit: int = 15):
+        """Show available moves with better formatting"""
         if not moves:
             print("❌ No valid moves!")
             return
         
-        print(f"\n📋 Your moves (showing {min(len(moves), limit)}):")
-        for i, move in enumerate(moves[:limit]):
-            pos = f"({move['position'][0]+1},{chr(65+move['position'][1])})"
-            print(f"{i+1:2d}. {move['word']:8s} - {move['score']:3d} pts - {pos}")
+        print(f"\n📋 Your moves (showing top {min(len(moves), limit)} by score):")
+        
+        # Sort by score for better display
+        sorted_moves = sorted(moves, key=lambda m: m['score'], reverse=True)
+        
+        for i, move in enumerate(sorted_moves[:limit]):
+            row, col = move['position']
+            pos = f"({row+1:2d},{chr(65+col)})"
+            direction = "→" if move.get('direction') == 'horizontal' else "↓"
+            print(f"{i+1:2d}. {move['word']:10s} - {move['score']:3d} pts - {pos} {direction}")
         
         if len(moves) > limit:
-            print(f"... and {len(moves) - limit} more")
+            print(f"... and {len(moves) - limit} more moves available")
     
     def human_turn(self):
-        """Handle human turn"""
+        """Handle human turn with improved interface"""
         moves = self.get_human_moves()
         
         if not moves:
             # No moves available
             print("❌ No valid moves available!")
-            print("Options:")
+            print("\n🔄 Options:")
             print("1. Exchange tiles (need ≥7 tiles in bag)")
             print("2. Pass turn")
             
             while True:
-                choice = input("Choose (1/2): ").strip()
+                choice = input("\n🎮 Choose option (1/2): ").strip()
                 if choice == '1':
                     if len(self.tile_bag) >= 7:
                         self.exchange_tiles()
@@ -146,13 +207,19 @@ class SimpleScrabbleGame:
                     self.consecutive_passes += 1
                     return
                 else:
-                    print("Enter 1 or 2")
+                    print("Please enter 1 or 2")
         else:
             # Show moves and get choice
             self.show_moves(moves)
             
+            print(f"\n🎮 Commands:")
+            print(f"  • Enter move number (1-{min(len(moves), 15)})")
+            print(f"  • 'more' - show all moves")
+            print(f"  • 'pass' - skip turn")
+            print(f"  • 'quit' - end game")
+            
             while True:
-                choice = input("\n🎮 Move number (or 'pass'/'quit'): ").strip().lower()
+                choice = input("\n🎯 Your choice: ").strip().lower()
                 
                 if choice == 'quit':
                     self.game_over = True
@@ -161,25 +228,30 @@ class SimpleScrabbleGame:
                     self.last_move = "You passed"
                     self.consecutive_passes += 1
                     return
+                elif choice == 'more':
+                    self.show_moves(moves, len(moves))
+                    continue
                 
                 try:
                     move_num = int(choice)
-                    if 1 <= move_num <= len(moves):
-                        self.play_move(moves[move_num - 1], is_human=True)
+                    # Sort moves by score to match display
+                    sorted_moves = sorted(moves, key=lambda m: m['score'], reverse=True)
+                    if 1 <= move_num <= len(sorted_moves):
+                        self.play_move(sorted_moves[move_num - 1], is_human=True)
                         self.consecutive_passes = 0
                         return
                     else:
-                        print(f"Enter 1-{len(moves)}")
+                        print(f"Please enter 1-{len(sorted_moves)}")
                 except ValueError:
-                    print("Enter a number")
+                    print("Please enter a valid number")
     
     def exchange_tiles(self):
-        """Exchange tiles"""
-        print(f"Current rack: {' '.join(self.human_rack)}")
-        print("Enter positions to exchange (e.g. '1 3 5') or 'all':")
+        """Exchange tiles with improved interface"""
+        print(f"\n🔄 Current rack: {' '.join(f'{i+1}:{tile}' for i, tile in enumerate(self.human_rack))}")
+        print("Enter positions to exchange (e.g., '1 3 5') or 'all':")
         
         while True:
-            choice = input("Exchange: ").strip().lower()
+            choice = input("🔄 Exchange: ").strip().lower()
             
             if choice == 'all':
                 tiles_to_exchange = self.human_rack.copy()
@@ -191,11 +263,11 @@ class SimpleScrabbleGame:
                         tiles_to_exchange = [self.human_rack[pos] for pos in positions]
                         break
                     else:
-                        print("Invalid positions")
+                        print("❌ Invalid positions")
                 except ValueError:
-                    print("Enter numbers like '1 3 5'")
+                    print("❌ Enter numbers like '1 3 5'")
         
-        # Exchange
+        # Exchange tiles
         for tile in tiles_to_exchange:
             self.human_rack.remove(tile)
         
@@ -274,7 +346,7 @@ class SimpleScrabbleGame:
         self.last_move = f"AI exchanged {len(tiles_to_exchange)} tiles"
     
     def play_move(self, move: Dict, is_human: bool):
-        """Execute a move"""
+        """Execute a move with better feedback"""
         # Place word on board
         self.board = place_word_on_board(self.board, move['word'], move['positions'])
         
@@ -282,9 +354,11 @@ class SimpleScrabbleGame:
         if is_human:
             self.human_score += move['score']
             player = "You"
+            emoji = "🎯"
         else:
             self.ai_score += move['score']
             player = "AI"
+            emoji = "🤖"
         
         # Update rack
         if is_human:
@@ -298,7 +372,14 @@ class SimpleScrabbleGame:
                 self.ai_rack, move['tiles_used'], tiles_drawn
             )
         
-        self.last_move = f"{player} played '{move['word']}' for {move['score']} points"
+        # Special move notifications
+        bonus = ""
+        if move['score'] >= 50:
+            bonus = " 🔥 HIGH SCORE!"
+        elif len(move['word']) >= 7:
+            bonus = " ⭐ BINGO!"
+        
+        self.last_move = f"{emoji} {player} played '{move['word']}' for {move['score']} points{bonus}"
     
     def is_game_over(self) -> bool:
         """Check if game should end"""
@@ -318,26 +399,31 @@ class SimpleScrabbleGame:
         return False
     
     def show_final_result(self):
-        """Show game result"""
+        """Show game result with stats"""
         print("\n🏆 GAME OVER!")
-        print("=" * 25)
-        print(f"Final Scores:")
-        print(f"You: {self.human_score}")
-        print(f"AI:  {self.ai_score}")
+        print("=" * 40)
+        print(f"📊 Final Scores:")
+        print(f"   You: {self.human_score}")
+        print(f"   AI:  {self.ai_score}")
         
         diff = abs(self.human_score - self.ai_score)
         if self.human_score > self.ai_score:
-            print(f"🎉 You won by {diff} points!")
+            print(f"\n🎉 Congratulations! You won by {diff} points!")
         elif self.ai_score > self.human_score:
-            print(f"🤖 AI won by {diff} points!")
+            print(f"\n🤖 AI won by {diff} points! Good game!")
         else:
-            print("🤝 It's a tie!")
+            print(f"\n🤝 Amazing! It's a perfect tie!")
         
-        print(f"Game lasted {self.turn_number} turns")
+        print(f"\n📈 Game Stats:")
+        print(f"   Game lasted: {self.turn_number} turns")
+        print(f"   AI opponent: {self.ai_name}")
+        print(f"   Your avg per turn: {self.human_score/self.turn_number:.1f}")
+        print(f"   AI avg per turn: {self.ai_score/self.turn_number:.1f}")
     
     def play(self):
         """Main game loop"""
-        print("🎮 Starting Scrabble Game!")
+        print("==============================\n🎮 Starting Scrabble vs RL Agent!")
+        input("Press Enter to begin...")
         
         while not self.game_over:
             # Display game
@@ -348,15 +434,15 @@ class SimpleScrabbleGame:
                 break
             
             # Human turn
-            print("\n🎯 Your turn!")
+            print("\n🎯 YOUR TURN!")
             self.human_turn()
             
             if self.game_over:
                 break
             
             # AI turn
-            print("\n🤖 AI's turn...")
-            input("Press Enter for AI move...")
+            print("\n🤖 AI is thinking...")
+            input("Press Enter to see AI move...")
             self.ai_turn()
             
             # Next turn
@@ -367,28 +453,16 @@ class SimpleScrabbleGame:
         self.show_final_result()
 
 def main():
-    """Start the game"""
-    game = SimpleScrabbleGame()
+    """Start the game with optional model path"""
     
-    print("🎮 SCRABBLE SETUP")
-    print("=" * 20)
-    print("Choose AI opponent:")
-    print("1. Greedy AI")
-    print("2. Load RL model")
+    # Check for command line model path
+    model_path = None
+    if len(sys.argv) > 1:
+        model_path = sys.argv[1]
+        print(f"📦 Using specified model: {model_path}")
     
-    while True:
-        choice = input("Choice (1/2): ").strip()
-        if choice == '1':
-            game.set_greedy_ai()
-            break
-        elif choice == '2':
-            model_path = input("Model path: ").strip()
-            if game.load_ai(model_path):
-                break
-        else:
-            print("Enter 1 or 2")
-    
-    input("\nPress Enter to start...")
+    # Create and start game
+    game = SimpleScrabbleGame(model_path=model_path)
     game.play()
 
 if __name__ == "__main__":
